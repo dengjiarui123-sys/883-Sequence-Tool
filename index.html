@@ -118,11 +118,14 @@
           <aside class="side" id="edit-side">
             <div id="side-edit">
               <h2>换色变透明</h2>
-              <p class="hint">单击胶片条设为当前帧，双击或点「编辑当前帧」进入编辑器。勾选标记控制是否在工作集内。</p>
+              <p class="hint">单击胶片条设为当前帧，双击或点「编辑当前帧」进入编辑器。勾选标记控制是否在工作集内。「还原帧」把勾选中的帧写回抽出时的绿幕。</p>
               <p id="current-frame-info">未选择帧</p>
-              <div class="side-actions">
+              <div class="side-actions wrap">
                 <button type="button" class="btn btn-primary" id="btn-open-editor">编辑当前帧</button>
                 <button type="button" class="btn" id="btn-batch">批量应用到选中帧</button>
+                <button type="button" class="btn" id="btn-restore-frames">还原帧</button>
+                <button type="button" class="btn" id="btn-restore-edit">全部勾选</button>
+                <button type="button" class="btn" id="btn-deselect-edit">全部取消</button>
               </div>
             </div>
             <div id="side-organize" hidden>
@@ -249,7 +252,7 @@
     <div id="editor-root" class="editor-root" hidden>
       <div class="editor">
         <header class="editor-bar">
-          <strong>换色编辑器</strong>
+          <strong>抠图编辑器</strong>
           <span id="editor-frame-name"></span>
           <div class="editor-zoom">
             <button type="button" class="btn" id="btn-editor-zoom-out" title="缩小">−</button>
@@ -266,19 +269,63 @@
             <canvas id="editor-canvas"></canvas>
           </div>
           <aside class="editor-tools">
-            <p class="hint">点击画面采样绿幕色。滚轮或 +/- 缩放画面。主图像未写入，调参只影响预览；点应用才改该帧。</p>
-            <div class="swatch-row">
-              <span class="swatch" id="sample-swatch"></span>
-              <span id="sample-rgb">未采样</span>
+            <div class="field">方法
+              <div class="seg" id="matte-method">
+                <button type="button" class="seg-btn is-on" data-method="chroma">色度</button>
+                <button type="button" class="seg-btn" data-method="birefNet">BiRefNet</button>
+              </div>
             </div>
-            <label class="field">容差 <span id="tol-val">24</span>
-              <input id="tolerance" type="range" min="1" max="80" value="24" />
-            </label>
-            <label class="field">边缘清除 <span id="edge-val">8</span>
-              <input id="edge-cleanup" type="range" min="0" max="24" value="8" />
-            </label>
-            <p class="hint">替换目标：透明（alpha = 0）。预览棋盘格表示透明。</p>
+            <div class="field">预览底
+              <div class="seg" id="preview-bg">
+                <button type="button" class="seg-btn is-on" data-bg="checker">棋盘格</button>
+                <button type="button" class="seg-btn" data-bg="white">白</button>
+                <button type="button" class="seg-btn" data-bg="black">黑</button>
+                <button type="button" class="seg-btn" data-bg="gray">灰</button>
+              </div>
+            </div>
+            <div id="chroma-panel">
+              <p class="hint">可点多处残绿。滚轮或 +/- 缩放。调参只影响预览；点应用才写入。再次打开从已应用的画面继续，不会还原抽出绿幕。</p>
+              <div id="chroma-swatches" class="chroma-swatches"></div>
+              <p id="sample-rgb" class="hint">未采样</p>
+              <button type="button" class="btn" id="btn-chroma-clear" hidden>清空色样</button>
+              <label class="field">容差 <span id="tol-val">24</span>
+                <input id="tolerance" type="range" min="1" max="80" value="24" />
+              </label>
+              <label class="field">Halo 收缩 <span id="halo-val">2</span>
+                <input id="halo" type="range" min="0" max="12" value="2" />
+              </label>
+              <label class="field">去溢色 <span id="despill-val">8</span>
+                <input id="despill" type="range" min="0" max="20" value="8" />
+              </label>
+            </div>
+            <div id="biref-panel" hidden>
+              <p class="hint">对当前工作帧做 AI 主体遮罩（已透明的区域会保留）。切到此方法不会自动跑；点开始推理后才下载/推理。拖阈值 / 羽化只重画。</p>
+              <p id="biref-status" class="matte-status">点开始推理</p>
+              <label class="field">阈值 <span id="biref-th-val">0.50</span>
+                <input id="biref-threshold" type="range" min="0" max="1" step="0.01" value="0.5" />
+              </label>
+              <label class="field">羽化 <span id="biref-feather-val">1</span>
+                <input id="biref-feather" type="range" min="0" max="8" value="1" />
+              </label>
+              <button type="button" class="btn btn-primary" id="btn-biref-rerun">开始推理</button>
+            </div>
+            <p class="hint">替换目标仍是透明；预览底不写入文件。</p>
           </aside>
+        </div>
+        <div id="biref-progress-root" class="biref-progress-overlay" hidden>
+          <div class="biref-progress-card" id="biref-progress-card">
+            <strong id="biref-progress-title">正在下载安装 BiRefNet</strong>
+            <p id="biref-progress-size" class="biref-progress-size">依赖环境约 3.3GB：PyTorch CUDA 12.8 约 2.7GB，其余包约 0.2GB，模型约 440MB</p>
+            <p id="biref-progress-label">已开始下载…</p>
+            <p id="biref-progress-meta" class="biref-progress-meta">准备开始…</p>
+            <div class="progress">
+              <div class="progress-bar"><i id="biref-progress-bar" class="is-waiting"></i></div>
+            </div>
+            <pre id="biref-progress-log"></pre>
+            <div class="biref-progress-actions">
+              <button type="button" class="btn btn-primary" id="biref-progress-close">关闭</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

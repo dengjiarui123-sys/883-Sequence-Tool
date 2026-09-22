@@ -14,11 +14,22 @@ export interface ChromaOp {
   x: number;
   y: number;
   color: [number, number, number];
+  colors?: [number, number, number][];
   tolerance: number;
-  edgeCleanup: number;
+  halo?: number;
+  despill?: number;
+  /** 旧工程字段：halo = round(edgeCleanup/4)，despill = min(20, edgeCleanup) */
+  edgeCleanup?: number;
 }
 
-export type FrameOp = ChromaOp;
+export interface BirefNetOp {
+  type: "birefNet";
+  model: "hr-matting";
+  threshold: number;
+  feather: number;
+}
+
+export type FrameOp = ChromaOp | BirefNetOp;
 
 export interface FrameRecord {
   id: string;

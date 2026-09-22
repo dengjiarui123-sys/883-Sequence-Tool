@@ -378,9 +378,12 @@ body.is-row-resize { cursor: row-resize; user-select: none; }
 }
 .modal h3 { margin: 0 0 8px; }
 .modal p { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.modal a { color: var(--accent); overflow-wrap: anywhere; }
+.modal a:hover { text-decoration: underline; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .editor {
+  position: relative;
   width: min(1600px, calc(100vw - 24px));
   height: min(1000px, calc(100vh - 24px));
   background: var(--paper); border-radius: 14px;
@@ -413,6 +416,97 @@ body.is-row-resize { cursor: row-resize; user-select: none; }
   width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--line);
   background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 12px 12px;
 }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg-btn {
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; font: 600 12px var(--sans);
+}
+.seg-btn.is-on { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31, 138, 76, 0.15); }
+.chroma-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; min-height: 28px; }
+.chroma-chip {
+  display: flex; align-items: center; gap: 2px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 3px 4px; background: #fff;
+}
+.chroma-chip span {
+  width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--line); display: block;
+}
+.chroma-chip button {
+  border: none; background: transparent; cursor: pointer; color: var(--muted);
+  font-size: 14px; line-height: 1; padding: 0 4px;
+}
+#btn-chroma-clear { margin: 0 0 10px; }
+.matte-status { font: 12px var(--mono); color: var(--muted); margin: 0 0 10px; }
+.biref-progress-overlay {
+  position: fixed; inset: 0; z-index: 30;
+  grid-row: 1 / -1; grid-column: 1;
+  background: rgba(18, 20, 16, 0.72);
+  display: grid; place-items: center; padding: 16px;
+}
+.biref-progress-overlay[hidden] { display: none !important; }
+.biref-progress-card {
+  width: min(560px, 100%);
+  background: var(--paper); border-radius: 14px; padding: 18px;
+  box-shadow: var(--shadow);
+}
+.biref-progress-card strong { display: block; margin-bottom: 8px; }
+.biref-progress-card.is-infer {
+  width: min(640px, 100%);
+  padding: 28px 24px;
+  text-align: center;
+  border: 2px solid var(--accent);
+}
+.biref-progress-card.is-infer strong {
+  font-size: 26px;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+.biref-progress-card.is-infer #biref-progress-label {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.biref-progress-card.is-infer .biref-progress-meta {
+  font-size: 14px !important;
+}
+.biref-progress-card.is-infer .progress { height: auto; }
+.biref-progress-card.is-infer .progress-bar { height: 12px; }
+.biref-progress-card.is-infer #biref-progress-log { display: none; }
+.biref-progress-actions { display: none; margin-top: 16px; justify-content: center; }
+.biref-progress-card.is-done .biref-progress-actions { display: flex; }
+.biref-progress-card.is-done #biref-progress-close {
+  min-width: 140px;
+  font-size: 16px;
+  padding: 10px 22px;
+}
+.biref-progress-size {
+  margin: 0 0 10px !important;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  line-height: 1.45;
+}
+.biref-progress-card p { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
+.biref-progress-meta { color: var(--muted) !important; font-size: 12px !important; }
+.biref-progress-card .progress { margin: 0 0 10px; }
+.biref-progress-card .progress-bar i.is-waiting {
+  width: 32% !important;
+  animation: biref-indet 1.4s ease-in-out infinite;
+}
+@keyframes biref-indet {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(340%); }
+}
+#biref-progress-log {
+  margin: 0; max-height: 160px; overflow: auto;
+  font: 11px var(--mono); color: var(--muted);
+  background: #f3f0e6; border-radius: 8px; padding: 8px;
+  white-space: pre-wrap; word-break: break-all;
+}
+.editor-canvas-wrap.preview-bg-white,
+.editor-canvas-wrap.preview-bg-black,
+.editor-canvas-wrap.preview-bg-gray { background-image: none; }
+.editor-canvas-wrap.preview-bg-white { background-color: #ffffff; }
+.editor-canvas-wrap.preview-bg-black { background-color: #000000; }
+.editor-canvas-wrap.preview-bg-gray { background-color: #9e9e9e; }
 
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 

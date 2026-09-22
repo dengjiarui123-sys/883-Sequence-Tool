@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
 import { showOpenDialog, showSaveDialog } from "./fileDialog.mjs";
+import { handleMatteApi } from "./matte.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8788;
@@ -133,6 +134,18 @@ function framePath(projectId, file) {
     throw Object.assign(new Error("非法帧文件名"), { status: 400 });
   }
   return path.join(WORKSPACE_DIR, projectId, "frames", file);
+}
+
+function originalFramePath(projectId, file) {
+  if (!FRAME_FILE_RE.test(file)) {
+    throw Object.assign(new Error("非法帧文件名"), { status: 400 });
+  }
+  return path.join(WORKSPACE_DIR, projectId, "frames-original", file);
+}
+
+async function ensureFrameDirs(projectId) {
+  await fs.mkdir(path.join(WORKSPACE_DIR, projectId, "frames"), { recursive: true });
+  await fs.mkdir(path.join(WORKSPACE_DIR, projectId, "frames-original"), { recursive: true });
 }
 
 function projectJsonPath(projectId) {
@@ -288,7 +301,7 @@ async function handleApi(req, res) {
         workspaceDir: `workspace/projects/${id}`,
       };
       await fs.mkdir(path.join(PROJECTS_DIR, id), { recursive: true });
-      await fs.mkdir(path.join(WORKSPACE_DIR, id, "frames"), { recursive: true });
+      await ensureFrameDirs(id);
       await atomicWriteJson(projectJsonPath(id), project);
       registry.projects.push(entry);
       registry.activeProjectId = id;
@@ -318,7 +331,7 @@ async function handleApi(req, res) {
         }
         body.id = id;
         await fs.mkdir(path.join(PROJECTS_DIR, id), { recursive: true });
-        await fs.mkdir(path.join(WORKSPACE_DIR, id, "frames"), { recursive: true });
+        await ensureFrameDirs(id);
         await atomicWriteJson(projectJsonPath(id), body);
         const registry = await loadRegistry();
         const entry = {
@@ -339,15 +352,18 @@ async function handleApi(req, res) {
 
       if (parts[3] === "frames" && parts.length === 4 && req.method === "DELETE") {
         const dir = path.join(WORKSPACE_DIR, id, "frames");
+        const originalDir = path.join(WORKSPACE_DIR, id, "frames-original");
         await fs.rm(dir, { recursive: true, force: true });
-        await fs.mkdir(dir, { recursive: true });
+        await fs.rm(originalDir, { recursive: true, force: true });
+        await ensureFrameDirs(id);
         json(res, 200, { ok: true });
         return true;
       }
 
-      if (parts[3] === "frames" && parts[4]) {
+      if ((parts[3] === "frames" || parts[3] === "frames-original") && parts[4]) {
         const file = parts[4];
-        const abs = framePath(id, file);
+        const isOriginal = parts[3] === "frames-original";
+        const abs = isOriginal ? originalFramePath(id, file) : framePath(id, file);
 
         if (req.method === "GET") {
           try {
@@ -359,7 +375,7 @@ async function handleApi(req, res) {
             });
             res.end(buf);
           } catch {
-            sendError(res, 404, "帧不存在");
+            sendError(res, 404, isOriginal ? "原图不存在" : "帧不存在");
           }
           return true;
         }
@@ -375,16 +391,26 @@ async function handleApi(req, res) {
             await fs.rm(abs, { force: true });
             await fs.rename(tmp, abs);
           }
-          json(res, 200, { ok: true, file: `workspace/projects/${id}/frames/${file}` });
+          json(res, 200, {
+            ok: true,
+            file: `workspace/projects/${id}/${isOriginal ? "frames-original" : "frames"}/${file}`,
+          });
           return true;
         }
 
         if (req.method === "DELETE") {
           await fs.rm(abs, { force: true });
+          if (!isOriginal) {
+            await fs.rm(originalFramePath(id, file), { force: true });
+          }
           json(res, 200, { ok: true });
           return true;
         }
       }
+    }
+
+    if (await handleMatteApi(req, res, parts, readBody)) {
+      return true;
     }
 
     sendError(res, 404, "未知接口");

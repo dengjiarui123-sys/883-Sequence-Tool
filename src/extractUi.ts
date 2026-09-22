@@ -1,4 +1,4 @@
-import { clearFrames, createProject, putFrame } from "./api";
+import { clearFrames, createProject, putFrame, putOriginalFrame } from "./api";
 import { choiceDialog, confirmDialog } from "./dom";
 import {
   clamp,
@@ -370,6 +370,7 @@ async function commitBlobs(
   for (let i = 0; i < captured.length; i++) {
     const file = padFrameFile(i + 1);
     await putFrame(project.id, file, captured[i].blob);
+    await putOriginalFrame(project.id, file, captured[i].blob);
     frames.push({
       id: `f${String(i + 1).padStart(4, "0")}`,
       index: i,

@@ -76,7 +76,7 @@ function applyDecimate(): void {
   persistSoon();
 }
 
-function selectAllFrames(): void {
+export function selectAllFrames(): void {
   const project = state.project;
   if (!project) return;
   if (project.frames.every((f) => f.inWorkingSet)) {
@@ -93,7 +93,7 @@ function selectAllFrames(): void {
   startPreview("selected");
 }
 
-function deselectAllFrames(): void {
+export function deselectAllFrames(): void {
   const project = state.project;
   if (!project) return;
   if (project.frames.every((f) => !f.inWorkingSet)) {
@@ -315,7 +315,9 @@ export function initOrganize(): void {
     history.undo();
   });
   document.getElementById("btn-restore")!.addEventListener("click", selectAllFrames);
+  document.getElementById("btn-restore-edit")!.addEventListener("click", selectAllFrames);
   document.getElementById("btn-deselect-all")!.addEventListener("click", deselectAllFrames);
+  document.getElementById("btn-deselect-edit")!.addEventListener("click", deselectAllFrames);
   document.getElementById("btn-remove")!.addEventListener("click", () => void removeUnselected());
   document.getElementById("btn-find-loop")!.addEventListener("click", () => void findLoops());
   document.getElementById("btn-preview-play")!.addEventListener("click", toggleOrganizePreview);

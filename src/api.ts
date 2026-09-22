@@ -71,6 +71,144 @@ export function frameUrl(projectId: string, file: string, bust = 0): string {
   return `/api/projects/${encodeURIComponent(projectId)}/frames/${encodeURIComponent(file)}${q}`;
 }
 
+export function originalFrameUrl(projectId: string, file: string, bust = 0): string {
+  const q = bust ? `?t=${bust}` : "";
+  return `/api/projects/${encodeURIComponent(projectId)}/frames-original/${encodeURIComponent(file)}${q}`;
+}
+
+export async function putOriginalFrame(projectId: string, file: string, blob: Blob): Promise<void> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/frames-original/${encodeURIComponent(file)}`,
+    { method: "PUT", body: blob },
+  );
+  await parseJson(res);
+}
+
+export const BIREFNET_MODEL_URL = "https://huggingface.co/ZhengPeng7/BiRefNet_HR-matting";
+
+/** Download sizes from the live pip log (torch cu128 cp314 wheel = 2771 MB). */
+export const BIREFNET_INSTALL_SIZE = {
+  torch: "约 2.7GB",
+  rest: "约 0.2GB",
+  model: "约 440MB",
+  total: "约 3.3GB",
+  summary: "依赖环境约 3.3GB：PyTorch CUDA 12.8 约 2.7GB，其余包约 0.2GB，模型约 440MB",
+};
+
+export interface MatteStatus {
+  python: boolean;
+  torch: boolean;
+  cuda: boolean;
+  model: boolean;
+  ready: boolean;
+  message: string;
+  modelUrl?: string;
+  error?: string;
+}
+
+export async function fetchMatteStatus(): Promise<MatteStatus> {
+  return parseJson(await fetch("/api/matte/status"));
+}
+
+export async function downloadMatteModel(): Promise<MatteStatus> {
+  return parseJson(await fetch("/api/matte/download", { method: "POST" }));
+}
+
+export async function installMatte(onProgress?: (ev: { line: string; percent?: number; phase?: string }) => void): Promise<MatteStatus> {
+  const res = await fetch("/api/matte/install", { method: "POST" });
+  const contentType = res.headers.get("content-type") || "";
+  if (res.status === 409 || !res.body || !contentType.includes("ndjson")) {
+    const text = await res.text();
+    let msg: Record<string, unknown> = {};
+    try {
+      msg = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    } catch {
+      msg = { error: text };
+    }
+    const error =
+      (typeof msg.error === "string" && msg.error) ||
+      (typeof msg.message === "string" && msg.message) ||
+      `安装失败 (${res.status})`;
+    if (res.status === 409 || /正在安装/.test(error)) {
+      return {
+        python: true,
+        torch: false,
+        cuda: false,
+        model: false,
+        ready: false,
+        message: error,
+        error,
+      };
+    }
+    if (!res.ok) throw new Error(error);
+    return msg as unknown as MatteStatus;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let last: MatteStatus | null = null;
+  let lastError = "";
+  const takeLine = (raw: string) => {
+    const text = raw.trim();
+    if (!text) return;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (typeof parsed.line === "string") {
+      onProgress?.({
+        line: parsed.line,
+        percent: typeof parsed.percent === "number" ? parsed.percent : undefined,
+        phase: typeof parsed.phase === "string" ? parsed.phase : undefined,
+      });
+    }
+    if (parsed.ok === false && typeof parsed.error === "string") lastError = parsed.error;
+    if (typeof parsed.ready === "boolean" || parsed.ok === true || parsed.ok === false) {
+      last = parsed as unknown as MatteStatus;
+    }
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines) takeLine(line);
+  }
+  takeLine(buf);
+  if (last) return last;
+  if (!res.ok) throw new Error(lastError || `安装失败 (${res.status})`);
+  throw new Error(lastError || "安装无响应");
+}
+
+export interface MatteResult {
+  blob: Blob;
+  device: string;
+  cudaFallback: boolean;
+}
+
+export async function requestMatte(png: Blob): Promise<MatteResult> {
+  const res = await fetch("/api/matte", { method: "POST", body: png });
+  if (!res.ok) {
+    const text = await res.text();
+    let message = `推理失败 (${res.status})`;
+    try {
+      const body = JSON.parse(text) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+  return {
+    blob: await res.blob(),
+    device: res.headers.get("X-Matte-Device") || "",
+    cudaFallback: res.headers.get("X-Matte-Fallback") === "1",
+  };
+}
+
 export async function pickSavePath(suggestedName: string): Promise<{ canceled: boolean; path?: string; dir?: string }> {
   return parseJson(
     await fetch("/api/dialogs/save", {
