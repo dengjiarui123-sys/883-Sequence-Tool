@@ -108,7 +108,7 @@ function defaultProject(id, label) {
     export: {
       format: "spritesheet",
       cell: { w: 256, h: 256 },
-      scale: { x: 0.2, y: 0.2 },
+      scale: { x: 1, y: 1 },
       offset: { x: 0, y: 0 },
       fit: "contain",
       smoothing: "smooth",
