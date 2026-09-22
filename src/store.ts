@@ -24,7 +24,7 @@ export interface AppState {
   loopCandidates: LoopCandidate[];
   loopSelected: number;
   loopBusy: boolean;
-  decimateUndo: boolean[] | null;
+  historyRev: number;
   bust: number;
 }
 
@@ -51,7 +51,7 @@ export const state: AppState = {
   loopCandidates: [],
   loopSelected: 0,
   loopBusy: false,
-  decimateUndo: null,
+  historyRev: 0,
   bust: Date.now(),
 };
 

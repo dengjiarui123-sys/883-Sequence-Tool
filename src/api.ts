@@ -70,3 +70,35 @@ export function frameUrl(projectId: string, file: string, bust = 0): string {
   const q = bust ? `?t=${bust}` : "";
   return `/api/projects/${encodeURIComponent(projectId)}/frames/${encodeURIComponent(file)}${q}`;
 }
+
+export async function pickSavePath(suggestedName: string): Promise<{ canceled: boolean; path?: string; dir?: string }> {
+  return parseJson(
+    await fetch("/api/dialogs/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ suggestedName }),
+    }),
+  );
+}
+
+export async function pickOpenPath(): Promise<{ canceled: boolean; path?: string; dir?: string }> {
+  return parseJson(await fetch("/api/dialogs/open", { method: "POST" }));
+}
+
+export async function writeProjectPack(filePath: string, data: Uint8Array): Promise<void> {
+  const res = await fetch(`/api/project-pack?path=${encodeURIComponent(filePath)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/zip" },
+    body: new Blob([new Uint8Array(data)]),
+  });
+  await parseJson(res);
+}
+
+export async function readProjectPack(filePath: string): Promise<Uint8Array> {
+  const res = await fetch(`/api/project-pack?path=${encodeURIComponent(filePath)}`);
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `读取工程失败 (${res.status})`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}

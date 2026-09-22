@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
+import { showOpenDialog, showSaveDialog } from "./fileDialog.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8788;
@@ -10,6 +11,7 @@ const DATA_DIR = path.join(ROOT, "data");
 const PROJECTS_DIR = path.join(DATA_DIR, "projects");
 const WORKSPACE_DIR = path.join(ROOT, "workspace", "projects");
 const REGISTRY_PATH = path.join(DATA_DIR, "projects.json");
+const LAST_PACK_PATH = path.join(DATA_DIR, "last-project-file.json");
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const FRAME_FILE_RE = /^[A-Za-z0-9_.-]+\.png$/i;
@@ -136,6 +138,64 @@ function projectJsonPath(projectId) {
   return path.join(PROJECTS_DIR, projectId, "project.json");
 }
 
+async function loadLastPack() {
+  try {
+    const parsed = JSON.parse(await fs.readFile(LAST_PACK_PATH, "utf8"));
+    if (parsed && typeof parsed.path === "string") return parsed;
+  } catch {
+    /* 还没有保存过 */
+  }
+  return { path: "", dir: "" };
+}
+
+async function saveLastPack(filePath) {
+  const record = { path: filePath, dir: path.dirname(filePath) };
+  await atomicWriteJson(LAST_PACK_PATH, record);
+  return record;
+}
+
+function normalizePackPath(filePath) {
+  const abs = path.resolve(String(filePath || "").replace(/^["']+|["']+$/g, "").trim());
+  if (/\.zip$/i.test(abs)) return abs;
+  if (/\.vsp$/i.test(abs)) return `${abs}.zip`;
+  return `${abs}.vsp.zip`;
+}
+
+function assertPackPath(filePath) {
+  if (!filePath || typeof filePath !== "string") {
+    throw Object.assign(new Error("缺少文件路径"), { status: 400 });
+  }
+  const abs = normalizePackPath(filePath);
+  if (!/^[A-Za-z]:[\\/]/.test(abs) && !abs.startsWith("\\\\")) {
+    throw Object.assign(new Error("只接受本机绝对路径"), { status: 400 });
+  }
+  if (!/\.zip$/i.test(abs)) {
+    throw Object.assign(new Error("工程文件必须是 .zip / .vsp.zip"), { status: 400 });
+  }
+  return abs;
+}
+
+async function agentLog(hypothesisId, message, data) {
+  // #region agent log
+  try {
+    await fs.appendFile(
+      path.join(ROOT, ".cursor", "debug-360abd.log"),
+      `${JSON.stringify({
+        sessionId: "360abd",
+        runId: "post-fix",
+        hypothesisId,
+        location: "server/index.mjs",
+        message,
+        data,
+        timestamp: Date.now(),
+      })}\n`,
+    );
+  } catch {
+    /* ignore */
+  }
+  // #endregion
+}
+
 async function handleApi(req, res) {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const parts = url.pathname.split("/").filter(Boolean);
@@ -146,13 +206,67 @@ async function handleApi(req, res) {
 
   try {
     if (req.method === "GET" && parts.length === 2 && parts[1] === "health") {
-      json(res, 200, { ok: true });
+      json(res, 200, { ok: true, dialogs: true });
       return true;
     }
 
     if (req.method === "GET" && parts.length === 2 && parts[1] === "registry") {
       json(res, 200, await loadRegistry());
       return true;
+    }
+
+    if (req.method === "GET" && parts.length === 2 && parts[1] === "last-project-file") {
+      json(res, 200, await loadLastPack());
+      return true;
+    }
+
+    if (req.method === "POST" && parts.length === 3 && parts[1] === "dialogs" && parts[2] === "save") {
+      const body = JSON.parse((await readBody(req, 1024 * 1024)).toString("utf8") || "{}");
+      const last = await loadLastPack();
+      const picked = await showSaveDialog({
+        fileName: String(body.suggestedName || "未命名序列.vsp.zip"),
+        initialDir: last.dir || "",
+      });
+      if (!picked) {
+        json(res, 200, { canceled: true, ...last });
+        return true;
+      }
+      const abs = assertPackPath(picked);
+      await agentLog("K", "save dialog path", { raw: picked, abs });
+      json(res, 200, { canceled: false, ...(await saveLastPack(abs)) });
+      return true;
+    }
+
+    if (req.method === "POST" && parts.length === 3 && parts[1] === "dialogs" && parts[2] === "open") {
+      const last = await loadLastPack();
+      const picked = await showOpenDialog({ initialDir: last.dir || "" });
+      if (!picked) {
+        json(res, 200, { canceled: true, dir: last.dir || "" });
+        return true;
+      }
+      const abs = assertPackPath(picked);
+      json(res, 200, { canceled: false, ...(await saveLastPack(abs)) });
+      return true;
+    }
+
+    if (parts.length === 2 && parts[1] === "project-pack") {
+      const packPath = assertPackPath(url.searchParams.get("path") || "");
+      if (req.method === "PUT") {
+        const buf = await readBody(req);
+        await atomicWriteFile(packPath, buf);
+        json(res, 200, await saveLastPack(packPath));
+        return true;
+      }
+      if (req.method === "GET") {
+        const buf = await fs.readFile(packPath);
+        res.writeHead(200, {
+          "Content-Type": "application/zip",
+          "Cache-Control": "no-store",
+          "Content-Length": buf.length,
+        });
+        res.end(buf);
+        return true;
+      }
     }
 
     if (req.method === "POST" && parts.length === 2 && parts[1] === "projects") {

@@ -1,5 +1,6 @@
 import { deleteFrame, frameUrl } from "./api";
 import { confirmDialog, imageDataFrom, loadImage } from "./dom";
+import * as history from "./history";
 import { persistNow, persistSoon } from "./persist";
 import { buildThumb, findLoopCandidates } from "./ssm";
 import { selectedFrames, setState, state } from "./store";
@@ -9,6 +10,7 @@ let previewTimer = 0;
 let previewIndex = 0;
 let previewIds: string[] = [];
 let playing = false;
+let lastPreviewId: string | null = null;
 
 function fileName(frameFile: string): string {
   return frameFile.split("/").pop()!;
@@ -39,13 +41,28 @@ function updateDecimatePreview(): void {
     `预计保留约 ${kx} 帧（剔除 ${drop} 帧，变为未选中，不会删除）`;
 }
 
+function snapshotWorkingSet(): boolean[] {
+  return (state.project?.frames ?? []).map((f) => f.inWorkingSet);
+}
+
+function restoreWorkingSet(snap: boolean[]): void {
+  state.project?.frames.forEach((f, i) => {
+    f.inWorkingSet = snap[i] ?? f.inWorkingSet;
+  });
+}
+
 function applyDecimate(): void {
   const project = state.project;
   if (!project) return;
   const n = Math.max(2, Number((document.getElementById("decimate-n") as HTMLInputElement).value) || 2);
   const keep = (document.getElementById("decimate-keep") as HTMLSelectElement).value as KeepPosition;
   const { keepSet, keep: kx, drop } = previewDecimate(n, keep);
-  const undo = project.frames.map((f) => f.inWorkingSet);
+  if (drop === 0) {
+    setState({ status: "没有可减的帧" });
+    return;
+  }
+  const undo = snapshotWorkingSet();
+  history.push("减帧", () => restoreWorkingSet(undo));
   for (const [i, frame] of project.frames.entries()) {
     if (!undo[i]) continue;
     frame.inWorkingSet = keepSet.has(i);
@@ -53,25 +70,20 @@ function applyDecimate(): void {
   document.getElementById("decimate-root")!.hidden = true;
   setState({
     dirty: true,
-    decimateUndo: undo,
     status: `减帧完成：约 ${kx} 帧仍选中，${drop} 帧未选中`,
   });
-  persistSoon();
-}
-
-function undoDecimate(): void {
-  const project = state.project;
-  if (!project || !state.decimateUndo) return;
-  project.frames.forEach((f, i) => {
-    f.inWorkingSet = state.decimateUndo![i] ?? f.inWorkingSet;
-  });
-  setState({ dirty: true, decimateUndo: null, status: "已撤销本次减帧" });
   persistSoon();
 }
 
 function restoreUnselected(): void {
   const project = state.project;
   if (!project) return;
+  if (project.frames.every((f) => f.inWorkingSet)) {
+    setState({ status: "已经全部选中" });
+    return;
+  }
+  const undo = snapshotWorkingSet();
+  history.push("全部恢复", () => restoreWorkingSet(undo));
   project.frames.forEach((f) => {
     f.inWorkingSet = true;
   });
@@ -89,7 +101,7 @@ async function removeUnselected(): Promise<void> {
   }
   const ok = await confirmDialog({
     title: "移出未选中",
-    body: `将 ${removed.length} 帧从胶片条移出（物理移出）。此操作不能用「撤销减帧」恢复。`,
+    body: `将 ${removed.length} 帧从胶片条移出（物理移出）。此操作无法撤销。`,
     ok: "移出",
     danger: true,
   });
@@ -108,10 +120,10 @@ async function removeUnselected(): Promise<void> {
     dirty: true,
     currentFrameId: current,
     loopCandidates: [],
-    decimateUndo: null,
     bust: Date.now(),
     status: `已移出 ${removed.length} 帧`,
   });
+  history.clear();
   await persistNow();
 }
 
@@ -162,6 +174,8 @@ function applyLoop(): void {
   const project = state.project;
   const candidate = state.loopCandidates[state.loopSelected];
   if (!project || !candidate) return;
+  const undo = snapshotWorkingSet();
+  history.push("裁剪循环", () => restoreWorkingSet(undo));
   const selected = selectedFrames();
   const keepIds = new Set(
     selected.slice(candidate.startSel, candidate.endSel + 1).map((f) => f.id),
@@ -182,6 +196,7 @@ async function drawPreviewFrame(id: string): Promise<void> {
   const canvas = document.getElementById("organize-preview") as HTMLCanvasElement;
   const ctx = canvas.getContext("2d");
   if (!project || !frame || !ctx) return;
+  lastPreviewId = id;
   const img = await loadImage(frameUrl(project.id, fileName(frame.file), state.bust));
   ctx.fillStyle = "#111";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -192,6 +207,18 @@ async function drawPreviewFrame(id: string): Promise<void> {
   document.getElementById("preview-info")!.textContent = `第 ${frame.index + 1} 帧`;
 }
 
+export function syncOrganizePreviewSize(): void {
+  const canvas = document.getElementById("organize-preview") as HTMLCanvasElement | null;
+  if (!canvas || !canvas.clientWidth || !canvas.clientHeight) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (canvas.width === w && canvas.height === h) return;
+  canvas.width = w;
+  canvas.height = h;
+  if (lastPreviewId) void drawPreviewFrame(lastPreviewId);
+}
+
 function stopPreview(): void {
   playing = false;
   window.clearInterval(previewTimer);
@@ -199,6 +226,7 @@ function stopPreview(): void {
 
 function startPreview(mode: "selected" | "loop", candidate?: LoopCandidate): void {
   stopPreview();
+  syncOrganizePreviewSize();
   const selected = selectedFrames();
   if (mode === "loop" && candidate) {
     previewIds = selected.slice(candidate.startSel, candidate.endSel + 1).map((f) => f.id);
@@ -242,7 +270,9 @@ export function initOrganize(): void {
     document.getElementById("decimate-root")!.hidden = true;
   });
   document.getElementById("decimate-ok")!.addEventListener("click", applyDecimate);
-  document.getElementById("btn-undo-decimate")!.addEventListener("click", undoDecimate);
+  document.getElementById("btn-undo-decimate")!.addEventListener("click", () => {
+    history.undo();
+  });
   document.getElementById("btn-restore")!.addEventListener("click", restoreUnselected);
   document.getElementById("btn-remove")!.addEventListener("click", () => void removeUnselected());
   document.getElementById("btn-find-loop")!.addEventListener("click", () => void findLoops());
@@ -260,6 +290,9 @@ export function initOrganize(): void {
 }
 
 export function syncOrganize(): void {
-  document.getElementById("btn-undo-decimate")!.toggleAttribute("disabled", !state.decimateUndo);
-  if (state.editTab === "organize") renderLoopList();
+  document.getElementById("btn-undo-decimate")!.toggleAttribute("disabled", !history.canUndo());
+  if (state.editTab === "organize") {
+    renderLoopList();
+    syncOrganizePreviewSize();
+  }
 }

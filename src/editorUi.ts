@@ -2,12 +2,25 @@ import { putFrame } from "./api";
 import { applyChromaKey, opsEqual } from "./chroma";
 import { confirmDialog, imageDataFrom, imageDataToPng, loadImage } from "./dom";
 import { persistNow } from "./persist";
+import * as history from "./history";
 import { currentFrame, selectedFrames, setState, state } from "./store";
 import type { ChromaOp } from "./types";
 
 let original: ImageData | null = null;
 let preview: ImageData | null = null;
 let sample: { x: number; y: number; color: [number, number, number] } | null = null;
+
+type EditorSnap = {
+  sample: { x: number; y: number; color: [number, number, number] } | null;
+  tolerance: number;
+  edgeCleanup: number;
+};
+
+const EDITOR_MAX = 15;
+let editorLocalStack: EditorSnap[] = [];
+let sliderSnap: EditorSnap | null = null;
+let sliderTimer = 0;
+let editorBaseline: EditorSnap = { sample: null, tolerance: 24, edgeCleanup: 8 };
 
 function canvas(): HTMLCanvasElement {
   return document.getElementById("editor-canvas") as HTMLCanvasElement;
@@ -53,6 +66,85 @@ function refreshPreview(): void {
   paint(preview);
 }
 
+function captureEditor(): EditorSnap {
+  const { tolerance, edgeCleanup } = readParams();
+  return {
+    sample: sample
+      ? { x: sample.x, y: sample.y, color: [sample.color[0], sample.color[1], sample.color[2]] }
+      : null,
+    tolerance,
+    edgeCleanup,
+  };
+}
+
+function applyEditorSnap(snap: EditorSnap): void {
+  sample = snap.sample
+    ? { x: snap.sample.x, y: snap.sample.y, color: [snap.sample.color[0], snap.sample.color[1], snap.sample.color[2]] }
+    : null;
+  (document.getElementById("tolerance") as HTMLInputElement).value = String(snap.tolerance);
+  (document.getElementById("edge-cleanup") as HTMLInputElement).value = String(snap.edgeCleanup);
+  document.getElementById("tol-val")!.textContent = String(snap.tolerance);
+  document.getElementById("edge-val")!.textContent = String(snap.edgeCleanup);
+  if (sample) {
+    document.getElementById("sample-rgb")!.textContent = `RGB ${sample.color.join(", ")}`;
+    (document.getElementById("sample-swatch") as HTMLElement).style.background = `rgb(${sample.color.join(",")})`;
+  } else {
+    document.getElementById("sample-rgb")!.textContent = "未采样";
+    (document.getElementById("sample-swatch") as HTMLElement).style.background = "";
+  }
+  refreshPreview();
+}
+
+function rememberEditorBaseline(): void {
+  editorBaseline = captureEditor();
+}
+
+function syncEditorUndoBtn(): void {
+  const btn = document.getElementById("btn-editor-undo") as HTMLButtonElement | null;
+  if (btn) btn.disabled = editorLocalStack.length === 0;
+}
+
+function pushEditorLocal(before: EditorSnap): void {
+  editorLocalStack.push(before);
+  while (editorLocalStack.length > EDITOR_MAX) editorLocalStack.shift();
+  syncEditorUndoBtn();
+}
+
+function clearEditorLocal(): void {
+  editorLocalStack = [];
+  sliderSnap = null;
+  window.clearTimeout(sliderTimer);
+  syncEditorUndoBtn();
+}
+
+function flushEditorSliderHistory(): void {
+  window.clearTimeout(sliderTimer);
+  if (!sliderSnap) return;
+  const before = sliderSnap;
+  sliderSnap = null;
+  const now = captureEditor();
+  if (
+    before.tolerance === now.tolerance &&
+    before.edgeCleanup === now.edgeCleanup &&
+    JSON.stringify(before.sample) === JSON.stringify(now.sample)
+  ) {
+    rememberEditorBaseline();
+    return;
+  }
+  pushEditorLocal(before);
+  rememberEditorBaseline();
+}
+
+export function undoEditorLocal(): boolean {
+  flushEditorSliderHistory();
+  const snap = editorLocalStack.pop();
+  if (!snap) return false;
+  applyEditorSnap(snap);
+  syncEditorUndoBtn();
+  rememberEditorBaseline();
+  return true;
+}
+
 async function openEditor(): Promise<void> {
   const project = state.project;
   const frame = currentFrame();
@@ -75,12 +167,15 @@ async function openEditor(): Promise<void> {
   document.getElementById("edge-val")!.textContent = "8";
   paint(original);
   document.getElementById("editor-root")!.hidden = false;
+  clearEditorLocal();
+  rememberEditorBaseline();
 }
 
 function closeEditor(): void {
   original = null;
   preview = null;
   sample = null;
+  clearEditorLocal();
   document.getElementById("editor-root")!.hidden = true;
   if (state.editorOpen) setState({ editorOpen: false });
 }
@@ -93,15 +188,28 @@ async function applyEditor(): Promise<void> {
     setState({ status: "请先点击画面采样颜色" });
     return;
   }
-  const blob = await imageDataToPng(preview);
-  await putFrame(project.id, fileName(frame.file), blob);
-  if (!frame.ops.some((o) => o.type === "chromaKey" && opsEqual(o, op))) {
-    frame.ops.push(op);
+  const ok = await confirmDialog({
+    title: "应用换色",
+    body: "将写入该帧像素，无法撤销。",
+    ok: "应用",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const blob = await imageDataToPng(preview);
+    await putFrame(project.id, fileName(frame.file), blob);
+    if (!frame.ops.some((o) => o.type === "chromaKey" && opsEqual(o, op))) {
+      frame.ops.push(op);
+    }
+    state.dirty = true;
+    history.clear();
+    clearEditorLocal();
+    closeEditor();
+    setState({ bust: Date.now(), status: `第 ${frame.index + 1} 帧已应用换色` });
+    await persistNow();
+  } catch (err) {
+    setState({ status: `应用失败：${(err as Error).message}` });
   }
-  state.dirty = true;
-  closeEditor();
-  setState({ bust: Date.now(), status: `第 ${frame.index + 1} 帧已应用换色` });
-  await persistNow();
 }
 
 export async function batchApply(): Promise<void> {
@@ -161,6 +269,7 @@ export async function batchApply(): Promise<void> {
       : `已将 ${ops.length} 个操作应用到 ${targets.length} 帧`,
   });
   await persistNow();
+  history.clear();
 }
 
 export function initEditor(): void {
@@ -170,15 +279,14 @@ export function initEditor(): void {
   document.getElementById("btn-editor-cancel")!.addEventListener("click", () => closeEditor());
   document.getElementById("btn-editor-apply")!.addEventListener("click", () => void applyEditor());
   document.getElementById("btn-editor-undo")!.addEventListener("click", () => {
-    if (!original) return;
-    preview = original;
-    paint(original);
-    setState({ status: "已回到进入编辑器时的像素" });
+    undoEditorLocal();
   });
   document.getElementById("btn-batch")!.addEventListener("click", () => void batchApply());
 
   canvas().addEventListener("click", (ev) => {
     if (!original) return;
+    flushEditorSliderHistory();
+    const before = captureEditor();
     const c = canvas();
     const rect = c.getBoundingClientRect();
     const x = Math.floor(((ev.clientX - rect.left) / rect.width) * original.width);
@@ -188,15 +296,25 @@ export function initEditor(): void {
     sample = { x: x / original.width, y: y / original.height, color };
     document.getElementById("sample-rgb")!.textContent = `RGB ${color.join(", ")}`;
     (document.getElementById("sample-swatch") as HTMLElement).style.background = `rgb(${color.join(",")})`;
+    pushEditorLocal(before);
+    rememberEditorBaseline();
     refreshPreview();
   });
 
   for (const id of ["tolerance", "edge-cleanup"]) {
-    document.getElementById(id)!.addEventListener("input", () => {
+    const el = document.getElementById(id)!;
+    el.addEventListener("pointerdown", () => {
+      if (!sliderSnap) sliderSnap = editorBaseline;
+    });
+    el.addEventListener("input", () => {
+      if (!sliderSnap) sliderSnap = editorBaseline;
       document.getElementById("tol-val")!.textContent = (document.getElementById("tolerance") as HTMLInputElement).value;
       document.getElementById("edge-val")!.textContent = (document.getElementById("edge-cleanup") as HTMLInputElement).value;
       refreshPreview();
+      window.clearTimeout(sliderTimer);
+      sliderTimer = window.setTimeout(flushEditorSliderHistory, 400);
     });
+    el.addEventListener("change", flushEditorSliderHistory);
   }
 }
 
@@ -208,6 +326,7 @@ export function syncEditorVisibility(): void {
     original = null;
     preview = null;
     sample = null;
+    clearEditorLocal();
     root.hidden = true;
   }
 }

@@ -8,7 +8,8 @@ import {
   relativeFramePath,
   sampleTimes,
 } from "./extractMath";
-import { persistNow } from "./persist";
+import { persistNow, persistSoon } from "./persist";
+import * as history from "./history";
 import { setState, state } from "./store";
 import type { CropRect, FrameRecord, Project } from "./types";
 
@@ -73,6 +74,48 @@ function clientToNorm(ev: PointerEvent): { x: number; y: number } | null {
   return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
 }
 
+function readPreviewRange(): { start: number; end: number } {
+  const video = videoEl();
+  const duration =
+    Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration
+      : state.project?.source.durationSec || 0;
+  let start = Number((document.getElementById("start-sec") as HTMLInputElement).value);
+  let end = Number((document.getElementById("end-sec") as HTMLInputElement).value);
+  if (!Number.isFinite(start)) start = 0;
+  if (!Number.isFinite(end)) end = duration;
+  start = clamp(start, 0, duration || 0);
+  end = clamp(end, 0, duration || 0);
+  if (!(end > start)) {
+    start = 0;
+    end = duration > 0 ? duration : 1;
+  }
+  return { start, end };
+}
+
+function updateVideoTimeLabel(): void {
+  const video = videoEl();
+  const { end } = readPreviewRange();
+  const t = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  (document.getElementById("video-scrub") as HTMLInputElement).value = String(t);
+  document.getElementById("video-time")!.textContent = `${formatTime(t)} / ${formatTime(end)}`;
+  document.getElementById("btn-play")!.textContent = video.paused ? "播放" : "暂停";
+}
+
+function applyPreviewRange(): void {
+  const video = videoEl();
+  const { start, end } = readPreviewRange();
+  const scrub = document.getElementById("video-scrub") as HTMLInputElement;
+  scrub.min = String(start);
+  scrub.max = String(end);
+  scrub.step = "0.01";
+  if (Number.isFinite(video.currentTime)) {
+    if (video.currentTime < start) video.currentTime = start;
+    else if (video.currentTime > end) video.currentTime = end;
+  }
+  updateVideoTimeLabel();
+}
+
 export function refreshExtractStats(): void {
   const project = state.project;
   const start = Number((document.getElementById("start-sec") as HTMLInputElement).value);
@@ -80,13 +123,21 @@ export function refreshExtractStats(): void {
   const fps = Number((document.getElementById("fps") as HTMLInputElement).value);
   (document.getElementById("fps-val") as HTMLElement).textContent = String(fps);
   const count = estimateFrameCount(start, end, fps);
+  const span = Number.isFinite(end) && Number.isFinite(start) ? Math.max(0, end - start) : 0;
   document.getElementById("estimate")!.innerHTML =
-    `预估帧数 <b>${count}</b>　<code>floor((end − start) × fps) + 1</code>`;
+    `预估 <b>${count}</b> 帧　（区间 ${formatTime(span)} 秒 × 每秒 ${fps} 帧）`;
   if (project) {
+    const changed =
+      project.extract.startSec !== start ||
+      project.extract.endSec !== end ||
+      project.extract.fps !== fps;
     project.extract.startSec = start;
     project.extract.endSec = end;
     project.extract.fps = fps;
+    if (changed && !state.dirty) setState({ dirty: true });
+    else if (changed) state.dirty = true;
   }
+  applyPreviewRange();
 }
 
 function syncMeta(): void {
@@ -99,7 +150,6 @@ function syncMeta(): void {
   document.getElementById("meta-name")!.textContent = name;
   document.getElementById("meta-res")!.textContent = w && h ? `${w} × ${h}` : "—";
   document.getElementById("meta-dur")!.textContent = dur ? `${formatTime(dur)} s` : "—";
-  document.getElementById("project-label")!.textContent = project?.label || "未命名工程";
 }
 
 export function syncExtractFieldsFromProject(): void {
@@ -118,10 +168,48 @@ function isAllowedVideo(file: File): boolean {
   return /\.(mp4|webm)$/i.test(file.name);
 }
 
+let extractParamSnap: { startSec: number; endSec: number; fps: number } | null = null;
+let extractParamTimer = 0;
+
+function beginExtractParamHistory(): void {
+  if (extractParamSnap || !state.project) return;
+  extractParamSnap = {
+    startSec: state.project.extract.startSec,
+    endSec: state.project.extract.endSec,
+    fps: state.project.extract.fps,
+  };
+}
+
+function commitExtractParamHistory(): void {
+  window.clearTimeout(extractParamTimer);
+  if (!extractParamSnap || !state.project) return;
+  const before = extractParamSnap;
+  extractParamSnap = null;
+  const cur = state.project.extract;
+  if (before.startSec === cur.startSec && before.endSec === cur.endSec && before.fps === cur.fps) return;
+  history.push("抽帧参数", () => {
+    if (!state.project) return;
+    state.project.extract.startSec = before.startSec;
+    state.project.extract.endSec = before.endSec;
+    state.project.extract.fps = before.fps;
+    syncExtractFieldsFromProject();
+  });
+}
+
 async function attachVideo(file: File): Promise<void> {
   if (!isAllowedVideo(file)) {
     setState({ extractError: "仅支持 mp4（H.264）或 webm。请换浏览器或先转 H.264。" });
     return;
+  }
+  const shouldClear = state.dirty || (state.project?.frames.length || 0) > 0;
+  if (shouldClear) {
+    const ok = await confirmDialog({
+      title: "更换源视频？",
+      body: "将替换提取设定，未保存的撤销记录将丢失。",
+      ok: "更换",
+      danger: true,
+    });
+    if (!ok) return;
   }
   if (state.videoUrl) URL.revokeObjectURL(state.videoUrl);
   const url = URL.createObjectURL(file);
@@ -163,11 +251,11 @@ async function attachVideo(file: File): Promise<void> {
   project.extract.startSec = 0;
   project.extract.endSec = project.source.durationSec;
   if (!project.extract.fps) project.extract.fps = 20;
-  const scrub = document.getElementById("video-scrub") as HTMLInputElement;
-  scrub.max = String(project.source.durationSec || 1);
-  scrub.value = "0";
+  extractParamSnap = null;
+  window.clearTimeout(extractParamTimer);
   syncExtractFieldsFromProject();
   setState({ status: "已载入视频，可裁剪并提取", dirty: true });
+  if (shouldClear) history.clear();
 }
 
 async function resolveDuration(video: HTMLVideoElement): Promise<number> {
@@ -299,6 +387,7 @@ export async function startExtract(): Promise<void> {
     return;
   }
   refreshExtractStats();
+  commitExtractParamHistory();
   const project = await ensureProject();
   const { startSec, endSec, fps, crop } = project.extract;
   if (!(endSec > startSec)) {
@@ -310,15 +399,15 @@ export async function startExtract(): Promise<void> {
     setState({ extractError: "预估帧数为 0，请调整时间或帧率。" });
     return;
   }
-  if (project.frames.length) {
-    const ok = await confirmDialog({
-      title: "重新提取？",
-      body: `当前工作集已有 ${project.frames.length} 帧。开始提取将替换整套工作集。`,
-      ok: "开始提取",
-      danger: true,
-    });
-    if (!ok) return;
-  }
+  const ok = await confirmDialog({
+    title: project.frames.length ? "重新提取？" : "开始提取？",
+    body: project.frames.length
+      ? `当前工作集已有 ${project.frames.length} 帧。开始提取将替换整套工作集。`
+      : "将生成整套工作集帧 PNG。此操作无法撤销。",
+    ok: "开始提取",
+    danger: true,
+  });
+  if (!ok) return;
 
   const abort = new AbortController();
   setState({
@@ -356,6 +445,7 @@ export async function startExtract(): Promise<void> {
         });
         if (choice === "primary") {
           await commitBlobs(project, captured);
+          history.clear();
           setState({
             currentFrameId: project.frames[0]?.id ?? null,
             step: "edit",
@@ -363,7 +453,6 @@ export async function startExtract(): Promise<void> {
             dirty: true,
             status: `已保留 ${captured.length} 帧`,
             loopCandidates: [],
-            decimateUndo: null,
           });
           await persistNow();
         } else {
@@ -374,6 +463,7 @@ export async function startExtract(): Promise<void> {
     }
 
     await commitBlobs(project, captured);
+    history.clear();
     setState({
       currentFrameId: project.frames[0]?.id ?? null,
       step: "edit",
@@ -381,7 +471,6 @@ export async function startExtract(): Promise<void> {
       dirty: true,
       status: `已提取 ${project.frames.length} 帧`,
       loopCandidates: [],
-      decimateUndo: null,
     });
     await persistNow();
   } catch (err) {
@@ -396,8 +485,15 @@ export async function startExtract(): Promise<void> {
 export function toggleVideoPlay(): void {
   const video = videoEl();
   if (!state.videoUrl) return;
-  if (video.paused) void video.play();
-  else video.pause();
+  if (video.paused) {
+    const { start, end } = readPreviewRange();
+    if (video.currentTime < start || video.currentTime >= end - 0.01) {
+      video.currentTime = start;
+    }
+    void video.play();
+  } else {
+    video.pause();
+  }
 }
 
 export function initExtract(): void {
@@ -409,6 +505,7 @@ export function initExtract(): void {
   hint.addEventListener("click", () => input.click());
   input.addEventListener("change", () => {
     const file = input.files?.[0];
+    input.value = "";
     if (file) void attachVideo(file);
   });
   stage.addEventListener("dragover", (ev) => {
@@ -421,11 +518,12 @@ export function initExtract(): void {
   });
 
   video.addEventListener("timeupdate", () => {
-    const dur = video.duration || 0;
-    (document.getElementById("video-scrub") as HTMLInputElement).value = String(video.currentTime);
-    document.getElementById("video-time")!.textContent =
-      `${formatTime(video.currentTime)} / ${formatTime(dur)}`;
-    document.getElementById("btn-play")!.textContent = video.paused ? "播放" : "暂停";
+    const { end } = readPreviewRange();
+    if (!video.paused && video.currentTime >= end - 0.01) {
+      video.pause();
+      video.currentTime = end;
+    }
+    updateVideoTimeLabel();
   });
   (document.getElementById("video-scrub") as HTMLInputElement).addEventListener("input", (ev) => {
     video.currentTime = Number((ev.target as HTMLInputElement).value);
@@ -433,7 +531,20 @@ export function initExtract(): void {
   document.getElementById("btn-play")!.addEventListener("click", () => toggleVideoPlay());
 
   for (const id of ["start-sec", "end-sec", "fps"]) {
-    document.getElementById(id)!.addEventListener("input", () => refreshExtractStats());
+    const el = document.getElementById(id)!;
+    el.addEventListener("input", () => {
+      beginExtractParamHistory();
+      refreshExtractStats();
+      persistSoon();
+      window.clearTimeout(extractParamTimer);
+      extractParamTimer = window.setTimeout(commitExtractParamHistory, 400);
+    });
+    el.addEventListener("change", () => {
+      beginExtractParamHistory();
+      refreshExtractStats();
+      persistSoon();
+      commitExtractParamHistory();
+    });
   }
   document.getElementById("btn-extract")!.addEventListener("click", () => void startExtract());
   document.getElementById("btn-cancel-extract")!.addEventListener("click", () => {
@@ -473,9 +584,18 @@ export function initExtract(): void {
       setCrop({ x, y, w, h });
     }
   });
-  cropRect.addEventListener("pointerup", () => {
+  const finishCropDrag = () => {
+    if (!drag) return;
+    const before = drag.crop;
+    const after = cropNorm();
     drag = null;
-  });
+    if (before.x === after.x && before.y === after.y && before.w === after.w && before.h === after.h) return;
+    history.push("裁剪框", () => {
+      setCrop(before);
+    });
+  };
+  cropRect.addEventListener("pointerup", finishCropDrag);
+  cropRect.addEventListener("pointercancel", finishCropDrag);
   window.addEventListener("resize", () => layoutCrop());
   video.addEventListener("loadeddata", () => layoutCrop());
 }

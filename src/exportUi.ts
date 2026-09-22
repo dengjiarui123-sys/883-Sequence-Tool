@@ -3,6 +3,7 @@ import { frameUrl } from "./api";
 import { canvasToPngBlob, createCellCanvas, drawCell, drawSpriteSheetPage, layoutSheet } from "./drawCell";
 import { downloadBlob, loadImage } from "./dom";
 import { persistSoon } from "./persist";
+import * as history from "./history";
 import { selectedFrames, setState, state } from "./store";
 import type { ExportSettings } from "./types";
 
@@ -226,15 +227,37 @@ export function initExport(): void {
   ];
   for (const id of ids) {
     document.getElementById(id)!.addEventListener("input", () => {
+      if (!exportSnap && state.project) exportSnap = structuredClone(state.project.export);
       readSettings();
       persistSoon();
       void refreshExportPreview();
+      window.clearTimeout(exportTimer);
+      exportTimer = window.setTimeout(commitExportHistory, 400);
     });
     document.getElementById(id)!.addEventListener("change", () => {
+      if (!exportSnap && state.project) exportSnap = structuredClone(state.project.export);
       readSettings();
       persistSoon();
       void refreshExportPreview();
+      commitExportHistory();
     });
   }
   document.getElementById("btn-download")!.addEventListener("click", () => void downloadExport());
+}
+
+let exportSnap: ExportSettings | null = null;
+let exportTimer = 0;
+
+function commitExportHistory(): void {
+  window.clearTimeout(exportTimer);
+  if (!exportSnap || !state.project) return;
+  const before = exportSnap;
+  exportSnap = null;
+  if (JSON.stringify(before) === JSON.stringify(state.project.export)) return;
+  history.push("导出参数", () => {
+    if (!state.project) return;
+    state.project.export = structuredClone(before);
+    syncExportFields();
+    void refreshExportPreview();
+  });
 }

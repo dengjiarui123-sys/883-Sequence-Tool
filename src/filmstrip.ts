@@ -1,4 +1,5 @@
 import { frameUrl } from "./api";
+import * as history from "./history";
 import { persistSoon } from "./persist";
 import { currentFrame, setState, state } from "./store";
 
@@ -45,10 +46,15 @@ export function initFilmstrip(): void {
     if (target.dataset.act === "toggle" || target.classList.contains("mark")) {
       const frame = state.project.frames.find((f) => f.id === id);
       if (!frame) return;
-      frame.inWorkingSet = !frame.inWorkingSet;
+      const was = frame.inWorkingSet;
+      history.push(was ? "取消选中" : "选中帧", () => {
+        const f = state.project?.frames.find((x) => x.id === id);
+        if (f) f.inWorkingSet = was;
+      });
+      frame.inWorkingSet = !was;
       state.dirty = true;
       lastKey = "";
-      setState({ currentFrameId: id, decimateUndo: null });
+      setState({ currentFrameId: id });
       persistSoon();
       root.focus();
       return;
@@ -65,7 +71,12 @@ export function initFilmstrip(): void {
 
 export function deselectCurrentFrame(): void {
   const frame = currentFrame();
-  if (!frame) return;
+  if (!frame || !frame.inWorkingSet) return;
+  const id = frame.id;
+  history.push("取消选中", () => {
+    const f = state.project?.frames.find((x) => x.id === id);
+    if (f) f.inWorkingSet = true;
+  });
   frame.inWorkingSet = false;
   state.dirty = true;
   lastKey = "";

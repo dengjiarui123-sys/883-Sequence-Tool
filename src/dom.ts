@@ -87,6 +87,20 @@ export function isTypingTarget(el: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }
 
+let toastTimer: number | null = null;
+
+export function showToast(message: string): void {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+  if (toastTimer) window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    el.hidden = true;
+    toastTimer = null;
+  }, 2500);
+}
+
 export async function loadImage(url: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.decoding = "async";
