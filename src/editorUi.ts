@@ -76,6 +76,19 @@ function fileName(frameFile: string): string {
   return frameFile.split("/").pop()!;
 }
 
+function showBatchProgress(current: number, total: number, hint: string): void {
+  const root = document.getElementById("batch-progress-root")!;
+  root.hidden = false;
+  const bar = document.getElementById("batch-progress-bar") as HTMLElement;
+  bar.style.width = total ? `${(current / total) * 100}%` : "0%";
+  document.getElementById("batch-progress-label")!.textContent = `${current} / ${total}`;
+  document.getElementById("batch-progress-hint")!.textContent = hint;
+}
+
+function hideBatchProgress(): void {
+  document.getElementById("batch-progress-root")!.hidden = true;
+}
+
 function readParams(): Pick<ChromaOp, "tolerance" | "edgeCleanup"> {
   return {
     tolerance: Number((document.getElementById("tolerance") as HTMLInputElement).value),
@@ -284,40 +297,49 @@ export async function batchApply(): Promise<void> {
   });
   if (!ok) return;
 
+  const batchBtn = document.getElementById("btn-batch") as HTMLButtonElement;
+  batchBtn.disabled = true;
   let failed: number[] = [];
   let done = 0;
+  showBatchProgress(0, targets.length, "开始处理…");
   setState({ status: "批量应用中…" });
-  for (const target of targets) {
-    try {
-      const pending = ops.filter((op) => !target.ops.some((existing) => existing.type === "chromaKey" && opsEqual(existing, op)));
-      if (!pending.length) {
-        done += 1;
-        continue;
+  try {
+    for (const target of targets) {
+      const seq = target.index + 1;
+      showBatchProgress(done, targets.length, `正在处理第 ${seq} 帧…`);
+      try {
+        const pending = ops.filter((op) => !target.ops.some((existing) => existing.type === "chromaKey" && opsEqual(existing, op)));
+        if (pending.length) {
+          const img = await loadImage(
+            `/api/projects/${encodeURIComponent(project.id)}/frames/${encodeURIComponent(fileName(target.file))}?t=${state.bust}`,
+          );
+          let data = imageDataFrom(img);
+          for (const op of pending) data = applyChromaKey(data, op);
+          const blob = await imageDataToPng(data);
+          await putFrame(project.id, fileName(target.file), blob);
+          target.ops.push(...pending);
+        }
+      } catch {
+        failed.push(seq);
       }
-      const img = await loadImage(
-        `/api/projects/${encodeURIComponent(project.id)}/frames/${encodeURIComponent(fileName(target.file))}?t=${state.bust}`,
-      );
-      let data = imageDataFrom(img);
-      for (const op of pending) data = applyChromaKey(data, op);
-      const blob = await imageDataToPng(data);
-      await putFrame(project.id, fileName(target.file), blob);
-      target.ops.push(...pending);
       done += 1;
-    } catch {
-      failed.push(target.index + 1);
+      showBatchProgress(done, targets.length, `已完成第 ${seq} 帧`);
+      setState({ status: `批量应用中… ${done}/${targets.length}` });
+      await new Promise((r) => setTimeout(r, 0));
     }
-    setState({ status: `批量应用中… ${done}/${targets.length}` });
-    await new Promise((r) => setTimeout(r, 0));
+    state.dirty = true;
+    setState({
+      bust: Date.now(),
+      status: failed.length
+        ? `已完成 ${done} 帧，失败序号：${failed.join("、")}`
+        : `已将 ${ops.length} 个操作应用到 ${targets.length} 帧`,
+    });
+    await persistNow();
+    history.clear();
+  } finally {
+    hideBatchProgress();
+    batchBtn.disabled = false;
   }
-  state.dirty = true;
-  setState({
-    bust: Date.now(),
-    status: failed.length
-      ? `已完成 ${done} 帧，失败序号：${failed.join("、")}`
-      : `已将 ${ops.length} 个操作应用到 ${targets.length} 帧`,
-  });
-  await persistNow();
-  history.clear();
 }
 
 export function initEditor(): void {

@@ -104,6 +104,7 @@ function defaultProject(id, label) {
       fps: 20,
     },
     frames: [],
+    editConfirmed: false,
     export: {
       format: "spritesheet",
       cell: { w: 256, h: 256 },

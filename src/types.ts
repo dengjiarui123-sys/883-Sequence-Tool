@@ -62,6 +62,7 @@ export interface Project {
     fps: number;
   };
   frames: FrameRecord[];
+  editConfirmed?: boolean;
   export: ExportSettings;
 }
 

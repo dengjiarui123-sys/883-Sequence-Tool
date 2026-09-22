@@ -86,9 +86,8 @@
             <span class="field-note">每秒从视频中提取多少个画面</span>
             <input id="fps" type="range" min="1" max="30" step="1" value="20" />
           </label>
-          <p class="estimate" id="estimate" title="floor((end − start) × fps) + 1">预估 <b>0</b> 帧　（区间 0 秒 × 每秒 20 帧）</p>
-          <p class="hint estimate-formula" title="floor((end − start) × fps) + 1">抽样公式 floor((end − start) × fps) + 1</p>
-          <p class="hint">按时间抽样，不是解码器逐编码帧。浏览器 seek 可能落在关键帧附近，不要当成 Premiere 逐帧。</p>
+          <p class="estimate" id="estimate">预估 <b>0</b> 帧　（区间 0 秒 × 每秒 20 帧）</p>
+          <p class="hint">按时间抽样，不是解码器逐编码帧。</p>
           <div class="progress" id="extract-progress" hidden>
             <div class="progress-bar"><i id="extract-bar"></i></div>
             <p id="extract-label">0 / 0</p>
@@ -105,6 +104,7 @@
         <div class="subtabs">
           <button type="button" class="subtab is-on" data-tab="edit">编辑</button>
           <button type="button" class="subtab" data-tab="organize">整理</button>
+          <button type="button" class="btn btn-primary" id="btn-confirm-export">确认导出</button>
         </div>
         <div class="edit-layout">
           <div class="film-col">
@@ -301,6 +301,17 @@
           <button type="button" class="btn" id="decimate-cancel">取消</button>
           <button type="button" class="btn btn-primary" id="decimate-ok">确认减帧</button>
         </div>
+      </div>
+    </div>
+
+    <div id="batch-progress-root" class="overlay" hidden>
+      <div class="modal batch-progress-modal">
+        <h3>批量应用</h3>
+        <p id="batch-progress-label">0 / 0</p>
+        <div class="progress">
+          <div class="progress-bar"><i id="batch-progress-bar"></i></div>
+        </div>
+        <p class="hint" id="batch-progress-hint">正在处理，请稍候…</p>
       </div>
     </div>
 

@@ -10,7 +10,7 @@ import { initOrganize, syncOrganize, toggleOrganizePreview } from "./organizeUi"
 import { initPlaybackSpeed } from "./playbackSpeed";
 import { formatSavedClock, persistNow, persistSoon } from "./persist";
 import { openProjectFromDisk, saveProjectFile } from "./projectFile";
-import { patchProject, setState, state, subscribe } from "./store";
+import { patchProject, selectedFrames, setState, state, subscribe, isEditConfirmed } from "./store";
 import type { EditTab, StepId } from "./types";
 
 function hasFrames(): boolean {
@@ -19,9 +19,7 @@ function hasFrames(): boolean {
 
 function renderShell(): void {
   const extractDone = hasFrames();
-  const editDone = Boolean(
-    state.project?.frames.some((f) => f.ops.length > 0 || !f.inWorkingSet),
-  );
+  const editDone = isEditConfirmed();
   document.getElementById("check-extract")!.classList.toggle("is-done", extractDone);
   document.getElementById("check-edit")!.classList.toggle("is-done", editDone);
   document.getElementById("check-export")!.classList.toggle("is-done", state.exportDone);
@@ -29,7 +27,18 @@ function renderShell(): void {
   document.getElementById("nav-edit")!.classList.toggle("is-on", state.step === "edit");
   document.getElementById("nav-export")!.classList.toggle("is-on", state.step === "export");
   (document.getElementById("nav-edit") as HTMLButtonElement).disabled = !extractDone && state.step !== "edit";
-  (document.getElementById("nav-export") as HTMLButtonElement).disabled = !extractDone && state.step !== "export";
+  const exportNav = document.getElementById("nav-export") as HTMLButtonElement;
+  exportNav.disabled = (!extractDone || !editDone) && state.step !== "export";
+  exportNav.title = !extractDone
+    ? "请先提取帧"
+    : editDone
+      ? ""
+      : "请先在编辑整理中点「确认导出」";
+  const confirmBtn = document.getElementById("btn-confirm-export") as HTMLButtonElement | null;
+  if (confirmBtn) {
+    confirmBtn.disabled = !extractDone;
+    confirmBtn.textContent = editDone ? "打开导出" : "确认导出";
+  }
 
   document.getElementById("panel-extract")!.hidden = state.step !== "extract";
   document.getElementById("panel-edit")!.hidden = state.step !== "edit";
@@ -75,11 +84,35 @@ function goto(step: StepId): void {
     setState({ status: "请先提取帧" });
     return;
   }
+  if (step === "export" && !isEditConfirmed()) {
+    setState({ status: "请先在编辑整理中点「确认导出」" });
+    return;
+  }
   setState({ step });
   if (step === "export") {
     syncExportFields();
     void refreshExportPreview();
   }
+}
+
+function confirmExport(): void {
+  const project = state.project;
+  if (!project || !hasFrames()) {
+    setState({ status: "请先提取帧" });
+    return;
+  }
+  if (isEditConfirmed()) {
+    goto("export");
+    return;
+  }
+  if (!selectedFrames().length) {
+    setState({ status: "请先勾选要导出的帧" });
+    return;
+  }
+  project.editConfirmed = true;
+  persistSoon();
+  setState({ dirty: true, status: "已确认，进入导出" });
+  goto("export");
 }
 
 async function restore(): Promise<void> {
@@ -132,6 +165,7 @@ function initShell(): void {
       setState({ editTab: (btn as HTMLElement).dataset.tab as EditTab });
     });
   });
+  document.getElementById("btn-confirm-export")!.addEventListener("click", confirmExport);
   document.getElementById("btn-quick-save")!.addEventListener("click", () => {
     void quickSave();
   });

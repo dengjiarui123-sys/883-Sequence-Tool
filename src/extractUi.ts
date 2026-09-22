@@ -381,6 +381,7 @@ async function commitBlobs(
     });
   }
   project.frames = frames;
+  project.editConfirmed = false;
 }
 
 export async function startExtract(): Promise<void> {
@@ -454,6 +455,7 @@ export async function startExtract(): Promise<void> {
             step: "edit",
             bust: Date.now(),
             dirty: true,
+            exportDone: false,
             status: `已保留 ${captured.length} 帧`,
             loopCandidates: [],
           });
@@ -472,6 +474,7 @@ export async function startExtract(): Promise<void> {
       step: "edit",
       bust: Date.now(),
       dirty: true,
+      exportDone: false,
       status: `已提取 ${project.frames.length} 帧`,
       loopCandidates: [],
     });

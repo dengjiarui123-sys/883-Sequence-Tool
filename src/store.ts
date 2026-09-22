@@ -85,3 +85,7 @@ export function currentFrame() {
   if (!id || !state.project) return null;
   return state.project.frames.find((f) => f.id === id) ?? null;
 }
+
+export function isEditConfirmed(): boolean {
+  return Boolean(state.project?.editConfirmed && (state.project.frames.length > 0));
+}
