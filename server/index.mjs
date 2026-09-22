@@ -419,7 +419,7 @@ async function start() {
   });
 
   server.listen(PORT, "127.0.0.1", () => {
-    console.log(`Video Sequence Packer  http://127.0.0.1:${PORT}`);
+    console.log(`883 Sequence Tool  http://127.0.0.1:${PORT}`);
   });
 }
 

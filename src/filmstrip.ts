@@ -1,25 +1,39 @@
 import { frameUrl } from "./api";
 import * as history from "./history";
 import { persistSoon } from "./persist";
-import { currentFrame, setState, state } from "./store";
+import { currentFrame, selectedFrames, setState, state } from "./store";
 
 let lastKey = "";
+let lastLoopScroll = "";
+
+function loopPreviewIds(): Set<string> | null {
+  const candidate = state.loopCandidates[state.loopSelected];
+  if (!candidate || !state.loopCandidates.length) return null;
+  const selected = selectedFrames();
+  return new Set(selected.slice(candidate.startSel, candidate.endSel + 1).map((f) => f.id));
+}
 
 export function renderFilmstrip(): void {
   const root = document.getElementById("filmstrip");
   const project = state.project;
   if (!root) return;
   const frames = project?.frames ?? [];
-  const key = `${project?.id}:${state.bust}:${state.currentFrameId}:${frames.map((f) => `${f.id}:${f.inWorkingSet}:${f.index}`).join("|")}`;
+  const loopIds = loopPreviewIds();
+  const loopPart = loopIds
+    ? `${state.loopSelected}:${[...loopIds].join(",")}`
+    : "none";
+  const key = `${project?.id}:${state.bust}:${state.currentFrameId}:${loopPart}:${frames.map((f) => `${f.id}:${f.inWorkingSet}:${f.index}`).join("|")}`;
   document.getElementById("film-count")!.textContent = `${frames.length} 帧 · 选中 ${frames.filter((f) => f.inWorkingSet).length}`;
   if (key === lastKey) return;
   lastKey = key;
   root.innerHTML = "";
   if (!project) return;
   for (const frame of frames) {
+    const inLoop = loopIds ? loopIds.has(frame.id) : false;
+    const loopClass = loopIds ? (inLoop ? " is-loop-in" : " is-loop-out") : "";
     const cell = document.createElement("button");
     cell.type = "button";
-    cell.className = `cell${frame.id === state.currentFrameId ? " is-current" : ""}${frame.inWorkingSet ? "" : " is-off"}`;
+    cell.className = `cell${frame.id === state.currentFrameId ? " is-current" : ""}${frame.inWorkingSet ? "" : " is-off"}${loopClass}`;
     cell.dataset.id = frame.id;
     const img = document.createElement("img");
     img.alt = frame.id;
@@ -33,6 +47,14 @@ export function renderFilmstrip(): void {
     mark.textContent = frame.inWorkingSet ? "✓" : "";
     cell.append(img, idx, mark);
     root.append(cell);
+  }
+  if (loopIds) {
+    if (loopPart !== lastLoopScroll) {
+      lastLoopScroll = loopPart;
+      root.querySelector(".cell.is-loop-in")?.scrollIntoView({ block: "nearest" });
+    }
+  } else {
+    lastLoopScroll = "";
   }
 }
 

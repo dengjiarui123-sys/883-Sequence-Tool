@@ -26,6 +26,52 @@ function canvas(): HTMLCanvasElement {
   return document.getElementById("editor-canvas") as HTMLCanvasElement;
 }
 
+function canvasWrap(): HTMLElement {
+  return canvas().parentElement as HTMLElement;
+}
+
+const MIN_ZOOM = 0.12;
+const MAX_ZOOM = 8;
+let zoom = 1;
+let zoomMode: "fit" | "manual" = "fit";
+
+function fitZoom(): number {
+  if (!original) return 1;
+  const wrap = canvasWrap();
+  const pad = 32;
+  const availW = Math.max(80, wrap.clientWidth - pad);
+  const availH = Math.max(80, wrap.clientHeight - pad);
+  return Math.min(availW / original.width, availH / original.height);
+}
+
+function applyCanvasCss(): void {
+  if (!original) return;
+  const c = canvas();
+  c.style.width = `${original.width * zoom}px`;
+  c.style.height = `${original.height * zoom}px`;
+  const label = document.getElementById("editor-zoom-val");
+  if (label) label.textContent = zoomMode === "fit" ? "适应" : `${Math.round(zoom * 100)}%`;
+}
+
+function setZoom(next: number, mode: "fit" | "manual", anchor?: { x: number; y: number }): void {
+  const wrap = canvasWrap();
+  const prev = zoom;
+  zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+  zoomMode = mode;
+  applyCanvasCss();
+  if (anchor && prev > 0) {
+    const ratio = zoom / prev;
+    wrap.scrollLeft = anchor.x * ratio - (anchor.x - wrap.scrollLeft);
+    wrap.scrollTop = anchor.y * ratio - (anchor.y - wrap.scrollTop);
+  }
+}
+
+function zoomToFit(): void {
+  setZoom(fitZoom(), "fit");
+  canvasWrap().scrollLeft = 0;
+  canvasWrap().scrollTop = 0;
+}
+
 function fileName(frameFile: string): string {
   return frameFile.split("/").pop()!;
 }
@@ -44,6 +90,7 @@ function paint(data: ImageData): void {
   const ctx = c.getContext("2d");
   if (!ctx) return;
   ctx.putImageData(data, 0, 0);
+  applyCanvasCss();
 }
 
 function currentOp(): ChromaOp | null {
@@ -169,6 +216,7 @@ async function openEditor(): Promise<void> {
   document.getElementById("editor-root")!.hidden = false;
   clearEditorLocal();
   rememberEditorBaseline();
+  requestAnimationFrame(() => zoomToFit());
 }
 
 function closeEditor(): void {
@@ -282,6 +330,32 @@ export function initEditor(): void {
     undoEditorLocal();
   });
   document.getElementById("btn-batch")!.addEventListener("click", () => void batchApply());
+  document.getElementById("btn-editor-zoom-in")!.addEventListener("click", () => {
+    setZoom(zoom * 1.25, "manual");
+  });
+  document.getElementById("btn-editor-zoom-out")!.addEventListener("click", () => {
+    setZoom(zoom / 1.25, "manual");
+  });
+  document.getElementById("btn-editor-zoom-fit")!.addEventListener("click", () => zoomToFit());
+  canvasWrap().addEventListener(
+    "wheel",
+    (ev) => {
+      if (!original || document.getElementById("editor-root")!.hidden) return;
+      ev.preventDefault();
+      const wrap = canvasWrap();
+      const rect = wrap.getBoundingClientRect();
+      const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setZoom(zoom * factor, "manual", {
+        x: ev.clientX - rect.left + wrap.scrollLeft,
+        y: ev.clientY - rect.top + wrap.scrollTop,
+      });
+    },
+    { passive: false },
+  );
+  new ResizeObserver(() => {
+    if (document.getElementById("editor-root")!.hidden || !original) return;
+    if (zoomMode === "fit") zoomToFit();
+  }).observe(canvasWrap());
 
   canvas().addEventListener("click", (ev) => {
     if (!original) return;
@@ -289,8 +363,9 @@ export function initEditor(): void {
     const before = captureEditor();
     const c = canvas();
     const rect = c.getBoundingClientRect();
-    const x = Math.floor(((ev.clientX - rect.left) / rect.width) * original.width);
-    const y = Math.floor(((ev.clientY - rect.top) / rect.height) * original.height);
+    if (!rect.width || !rect.height) return;
+    const x = Math.max(0, Math.min(original.width - 1, Math.floor(((ev.clientX - rect.left) / rect.width) * original.width)));
+    const y = Math.max(0, Math.min(original.height - 1, Math.floor(((ev.clientY - rect.top) / rect.height) * original.height)));
     const i = (y * original.width + x) * 4;
     const color: [number, number, number] = [original.data[i], original.data[i + 1], original.data[i + 2]];
     sample = { x: x / original.width, y: y / original.height, color };

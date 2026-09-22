@@ -1,4 +1,4 @@
-# Video Sequence Packer
+# 883 Sequence Tool
 
 本地网页工作台：从绿幕 / 纯色底 AI 视频抽出序列帧，抠透明、整理工作集，导出 ZIP 散图或等大格 Sprite Sheet。
 

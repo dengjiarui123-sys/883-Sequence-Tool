@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Video Sequence Packer</title>
+    <title>883 Sequence Tool</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <div id="app">
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark">VSP</span>
+          <span class="brand-mark">883</span>
           <div>
-            <h1>Video Sequence Packer</h1>
+            <h1>883 Sequence Tool</h1>
             <p class="brand-sub">绿幕 / 纯色底 · 抽帧 · 换色 · 整理 · 导出</p>
           </div>
         </div>
@@ -56,9 +56,16 @@
             </label>
           </div>
           <div class="timeline-row">
-            <button type="button" class="btn" id="btn-play">播放</button>
+            <button type="button" class="btn" id="btn-play">播放预览</button>
             <input id="video-scrub" type="range" min="0" max="1" step="0.01" value="0" />
             <span id="video-time">0.00 / 0.00</span>
+          </div>
+          <div class="speed-row">
+            <span class="speed-label">播放速度</span>
+            <span class="speed-end">慢</span>
+            <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
+            <span class="speed-end">快</span>
+            <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
           </div>
         </div>
         <div class="splitter splitter-col" id="split-extract" role="separator" aria-orientation="vertical" aria-label="调整提取页栏宽" title="拖拽调整宽度，双击恢复默认"></div>
@@ -125,19 +132,26 @@
                 <button type="button" class="btn" id="btn-decimate">减帧…</button>
                 <button type="button" class="btn" id="btn-undo-decimate" disabled>撤销本次减帧</button>
                 <button type="button" class="btn" id="btn-find-loop">寻找循环帧</button>
-                <button type="button" class="btn" id="btn-apply-loop" disabled>裁剪到循环区间</button>
-                <button type="button" class="btn" id="btn-restore">全部恢复</button>
+                <button type="button" class="btn" id="btn-restore">全部勾选</button>
+                <button type="button" class="btn" id="btn-deselect-all">全部取消</button>
                 <button type="button" class="btn btn-danger" id="btn-remove">移出未选中</button>
               </div>
               <p id="loop-progress" class="hint" hidden></p>
               <div id="loop-list" class="loop-list"></div>
-              <p class="hint">范围 A–B：保留 A 至 B 前一帧；B 为接缝对照帧（半开区间）。</p>
+              <p class="hint">点方案可预览范围。范围按胶片序号显示（即格子上的数字）。点方案上的「应用」后关闭列表；之后可用格子上的 ✓ 把帧压黑或重新点亮，减帧和寻找循环都按当前点亮集合计算。</p>
               <div class="splitter splitter-row" id="split-organize-preview" role="separator" aria-orientation="horizontal" aria-label="调整预览高度" title="拖拽调整高度，双击恢复默认"></div>
               <div class="preview-box">
                 <canvas id="organize-preview" width="280" height="280"></canvas>
                 <div class="preview-bar">
-                  <button type="button" class="btn" id="btn-preview-play">预览选中</button>
+                  <button type="button" class="btn" id="btn-preview-play">播放预览</button>
                   <span id="preview-info">只播放当前选中集合</span>
+                </div>
+                <div class="speed-row speed-row-dark">
+                  <span class="speed-label">播放速度</span>
+                  <span class="speed-end">慢</span>
+                  <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
+                  <span class="speed-end">快</span>
+                  <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
                 </div>
               </div>
             </div>
@@ -237,6 +251,12 @@
         <header class="editor-bar">
           <strong>换色编辑器</strong>
           <span id="editor-frame-name"></span>
+          <div class="editor-zoom">
+            <button type="button" class="btn" id="btn-editor-zoom-out" title="缩小">−</button>
+            <span id="editor-zoom-val">适应</span>
+            <button type="button" class="btn" id="btn-editor-zoom-in" title="放大">+</button>
+            <button type="button" class="btn" id="btn-editor-zoom-fit">适应窗口</button>
+          </div>
           <button type="button" class="btn" id="btn-editor-undo">撤销</button>
           <button type="button" class="btn" id="btn-editor-cancel">取消</button>
           <button type="button" class="btn btn-primary" id="btn-editor-apply">应用</button>
@@ -246,7 +266,7 @@
             <canvas id="editor-canvas"></canvas>
           </div>
           <aside class="editor-tools">
-            <p class="hint">点击画面采样绿幕色。主图像未写入，调参只影响预览；点应用才改该帧。</p>
+            <p class="hint">点击画面采样绿幕色。滚轮或 +/- 缩放画面。主图像未写入，调参只影响预览；点应用才改该帧。</p>
             <div class="swatch-row">
               <span class="swatch" id="sample-swatch"></span>
               <span id="sample-rgb">未采样</span>

@@ -9,6 +9,7 @@ import {
   sampleTimes,
 } from "./extractMath";
 import { persistNow, persistSoon } from "./persist";
+import { applyVideoPlaybackRate } from "./playbackSpeed";
 import * as history from "./history";
 import { setState, state } from "./store";
 import type { CropRect, FrameRecord, Project } from "./types";
@@ -99,7 +100,7 @@ function updateVideoTimeLabel(): void {
   const t = Number.isFinite(video.currentTime) ? video.currentTime : 0;
   (document.getElementById("video-scrub") as HTMLInputElement).value = String(t);
   document.getElementById("video-time")!.textContent = `${formatTime(t)} / ${formatTime(end)}`;
-  document.getElementById("btn-play")!.textContent = video.paused ? "播放" : "暂停";
+  document.getElementById("btn-play")!.textContent = video.paused ? "播放预览" : "暂停";
 }
 
 function applyPreviewRange(): void {
@@ -217,10 +218,12 @@ async function attachVideo(file: File): Promise<void> {
   setState({ videoFile: file, videoUrl: url, extractError: "" });
   document.getElementById("drop-hint")!.hidden = true;
   video.src = url;
+  applyVideoPlaybackRate();
   await new Promise<void>((resolve, reject) => {
     const onReady = () => {
       video.removeEventListener("loadedmetadata", onReady);
       video.removeEventListener("error", onErr);
+      applyVideoPlaybackRate();
       resolve();
     };
     const onErr = () => {
@@ -490,6 +493,7 @@ export function toggleVideoPlay(): void {
     if (video.currentTime < start || video.currentTime >= end - 0.01) {
       video.currentTime = start;
     }
+    applyVideoPlaybackRate();
     void video.play();
   } else {
     video.pause();
@@ -529,6 +533,7 @@ export function initExtract(): void {
     video.currentTime = Number((ev.target as HTMLInputElement).value);
   });
   document.getElementById("btn-play")!.addEventListener("click", () => toggleVideoPlay());
+  video.addEventListener("loadedmetadata", () => applyVideoPlaybackRate());
 
   for (const id of ["start-sec", "end-sec", "fps"]) {
     const el = document.getElementById(id)!;

@@ -2,6 +2,7 @@ import { deleteFrame, frameUrl } from "./api";
 import { confirmDialog, imageDataFrom, loadImage } from "./dom";
 import * as history from "./history";
 import { persistNow, persistSoon } from "./persist";
+import { getPlaybackRate, onPlaybackRateChange } from "./playbackSpeed";
 import { buildThumb, findLoopCandidates } from "./ssm";
 import { selectedFrames, setState, state } from "./store";
 import type { KeepPosition, LoopCandidate } from "./types";
@@ -75,20 +76,38 @@ function applyDecimate(): void {
   persistSoon();
 }
 
-function restoreUnselected(): void {
+function selectAllFrames(): void {
   const project = state.project;
   if (!project) return;
   if (project.frames.every((f) => f.inWorkingSet)) {
-    setState({ status: "已经全部选中" });
+    setState({ status: "已经全部勾选" });
     return;
   }
   const undo = snapshotWorkingSet();
-  history.push("全部恢复", () => restoreWorkingSet(undo));
+  history.push("全部勾选", () => restoreWorkingSet(undo));
   project.frames.forEach((f) => {
     f.inWorkingSet = true;
   });
-  setState({ dirty: true, status: "已全部恢复为选中", loopCandidates: [] });
+  setState({ dirty: true, status: "已全部勾选", loopCandidates: [] });
   persistSoon();
+  startPreview("selected");
+}
+
+function deselectAllFrames(): void {
+  const project = state.project;
+  if (!project) return;
+  if (project.frames.every((f) => !f.inWorkingSet)) {
+    setState({ status: "已经全部取消勾选" });
+    return;
+  }
+  const undo = snapshotWorkingSet();
+  history.push("全部取消", () => restoreWorkingSet(undo));
+  project.frames.forEach((f) => {
+    f.inWorkingSet = false;
+  });
+  setState({ dirty: true, status: "已全部取消勾选", loopCandidates: [] });
+  persistSoon();
+  startPreview("selected");
 }
 
 async function removeUnselected(): Promise<void> {
@@ -132,13 +151,15 @@ function renderLoopList(): void {
   const list = state.loopCandidates;
   root.innerHTML = list
     .map((c, i) => {
-      return `<button type="button" class="loop-card${i === state.loopSelected ? " is-on" : ""}" data-i="${i}">
-        <b>${c.label} · ${c.frameCount} 帧 · ${c.startDisplay}–${c.endDisplay}</b>
-        平滑度 ${c.smoothness.toFixed(0)}%　覆盖率 ${c.coverage.toFixed(0)}%　范围 ${c.startDisplay}–${c.endDisplay}
-      </button>`;
+      return `<div class="loop-card${i === state.loopSelected ? " is-on" : ""}" data-i="${i}">
+        <div class="loop-card-body">
+          <b>${c.label} · ${c.frameCount} 帧 · ${c.startDisplay}–${c.endDisplay}</b>
+          平滑度 ${c.smoothness.toFixed(0)}%　覆盖率 ${c.coverage.toFixed(0)}%　胶片序号 ${c.startDisplay}–${c.endDisplay}
+        </div>
+        <button type="button" class="btn btn-primary" data-act="apply" data-i="${i}">应用</button>
+      </div>`;
     })
     .join("");
-  document.getElementById("btn-apply-loop")!.toggleAttribute("disabled", list.length === 0);
 }
 
 async function findLoops(): Promise<void> {
@@ -163,31 +184,35 @@ async function findLoops(): Promise<void> {
     loopBusy: false,
     loopCandidates: candidates,
     loopSelected: 0,
-    status: candidates.length ? `找到 ${candidates.length} 个循环方案` : "没有可用循环方案，试试别的选中区间",
+    status: candidates.length
+      ? `找到 ${candidates.length} 个循环方案。点方案可预览胶片范围，点「应用」后关闭列表并写入选中`
+      : "没有可用循环方案，试试别的选中区间",
   });
   document.getElementById("loop-progress")!.hidden = true;
   renderLoopList();
   if (candidates[0]) startPreview("loop", candidates[0]);
 }
 
-function applyLoop(): void {
+async function applyLoopAt(index: number): Promise<void> {
   const project = state.project;
-  const candidate = state.loopCandidates[state.loopSelected];
+  const candidate = state.loopCandidates[index];
   if (!project || !candidate) return;
+  const selected = selectedFrames();
   const undo = snapshotWorkingSet();
   history.push("裁剪循环", () => restoreWorkingSet(undo));
-  const selected = selectedFrames();
-  const keepIds = new Set(
-    selected.slice(candidate.startSel, candidate.endSel + 1).map((f) => f.id),
-  );
+  const keepFrames = selected.slice(candidate.startSel, candidate.endSel + 1);
+  const keepIds = new Set(keepFrames.map((f) => f.id));
   for (const frame of project.frames) {
     frame.inWorkingSet = keepIds.has(frame.id);
   }
   setState({
     dirty: true,
-    status: `已裁剪到循环区间 ${candidate.startDisplay}–${candidate.endDisplay}（不含接缝对照帧）`,
+    loopCandidates: [],
+    loopSelected: 0,
+    status: `已应用「${candidate.label}」：胶片序号 ${candidate.startDisplay}–${candidate.endDisplay}`,
   });
   persistSoon();
+  startPreview("selected");
 }
 
 async function drawPreviewFrame(id: string): Promise<void> {
@@ -222,6 +247,27 @@ export function syncOrganizePreviewSize(): void {
 function stopPreview(): void {
   playing = false;
   window.clearInterval(previewTimer);
+  syncPreviewPlayLabel();
+}
+
+function previewIntervalMs(): number {
+  const fps = Math.max(4, Math.min(30, state.project?.extract.fps || 12));
+  return 1000 / (fps * getPlaybackRate());
+}
+
+function schedulePreviewTick(): void {
+  window.clearInterval(previewTimer);
+  if (!playing || !previewIds.length) return;
+  previewTimer = window.setInterval(() => {
+    if (!playing || !previewIds.length) return;
+    previewIndex = (previewIndex + 1) % previewIds.length;
+    void drawPreviewFrame(previewIds[previewIndex]);
+  }, previewIntervalMs());
+}
+
+function syncPreviewPlayLabel(): void {
+  const btn = document.getElementById("btn-preview-play");
+  if (btn) btn.textContent = playing ? "暂停" : "播放预览";
 }
 
 function startPreview(mode: "selected" | "loop", candidate?: LoopCandidate): void {
@@ -235,28 +281,23 @@ function startPreview(mode: "selected" | "loop", candidate?: LoopCandidate): voi
   }
   if (!previewIds.length) {
     document.getElementById("preview-info")!.textContent = "没有可播放的选中帧";
+    syncPreviewPlayLabel();
     return;
   }
   previewIndex = 0;
   playing = true;
-  const fps = Math.max(4, Math.min(30, state.project?.extract.fps || 12));
   void drawPreviewFrame(previewIds[0]);
-  previewTimer = window.setInterval(() => {
-    if (!playing || !previewIds.length) return;
-    previewIndex = (previewIndex + 1) % previewIds.length;
-    void drawPreviewFrame(previewIds[previewIndex]);
-  }, 1000 / fps);
+  schedulePreviewTick();
+  syncPreviewPlayLabel();
 }
 
 export function toggleOrganizePreview(): void {
   if (playing) {
     stopPreview();
-    document.getElementById("btn-preview-play")!.textContent = "预览选中";
     return;
   }
   const candidate = state.loopCandidates[state.loopSelected];
   startPreview(candidate ? "loop" : "selected", candidate);
-  document.getElementById("btn-preview-play")!.textContent = "暂停";
 }
 
 export function initOrganize(): void {
@@ -273,19 +314,31 @@ export function initOrganize(): void {
   document.getElementById("btn-undo-decimate")!.addEventListener("click", () => {
     history.undo();
   });
-  document.getElementById("btn-restore")!.addEventListener("click", restoreUnselected);
+  document.getElementById("btn-restore")!.addEventListener("click", selectAllFrames);
+  document.getElementById("btn-deselect-all")!.addEventListener("click", deselectAllFrames);
   document.getElementById("btn-remove")!.addEventListener("click", () => void removeUnselected());
   document.getElementById("btn-find-loop")!.addEventListener("click", () => void findLoops());
-  document.getElementById("btn-apply-loop")!.addEventListener("click", applyLoop);
   document.getElementById("btn-preview-play")!.addEventListener("click", toggleOrganizePreview);
+  onPlaybackRateChange(() => {
+    if (playing) schedulePreviewTick();
+  });
   document.getElementById("loop-list")!.addEventListener("click", (ev) => {
+    const applyBtn = (ev.target as HTMLElement).closest("[data-act=apply]") as HTMLElement | null;
+    if (applyBtn) {
+      void applyLoopAt(Number(applyBtn.dataset.i));
+      return;
+    }
     const card = (ev.target as HTMLElement).closest(".loop-card") as HTMLElement | null;
     if (!card) return;
     const i = Number(card.dataset.i);
-    setState({ loopSelected: i });
-    renderLoopList();
     const candidate = state.loopCandidates[i];
-    if (candidate) startPreview("loop", candidate);
+    if (!candidate) return;
+    setState({
+      loopSelected: i,
+      status: `已选中「${candidate.label}」${candidate.startDisplay}–${candidate.endDisplay}，点「应用」写入选中`,
+    });
+    renderLoopList();
+    startPreview("loop", candidate);
   });
 }
 

@@ -105,7 +105,7 @@ export function findLoopCandidates(thumbs: FrameThumb[]): LoopCandidate[] {
         endInclusiveId: thumbs[endExclusive - 1].id,
         seamId: thumbs[seam].id,
         startDisplay: thumbs[start].display,
-        endDisplay: thumbs[seam].display,
+        endDisplay: thumbs[endExclusive - 1].display,
         frameCount: len,
         smoothness,
         coverage,

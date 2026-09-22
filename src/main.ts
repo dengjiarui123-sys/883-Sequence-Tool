@@ -7,6 +7,7 @@ import { initLayout } from "./layout";
 import { deselectCurrentFrame, initFilmstrip, renderFilmstrip } from "./filmstrip";
 import * as history from "./history";
 import { initOrganize, syncOrganize, toggleOrganizePreview } from "./organizeUi";
+import { initPlaybackSpeed } from "./playbackSpeed";
 import { formatSavedClock, persistNow, persistSoon } from "./persist";
 import { openProjectFromDisk, saveProjectFile } from "./projectFile";
 import { patchProject, setState, state, subscribe } from "./store";
@@ -301,6 +302,7 @@ async function boot(): Promise<void> {
   initExport();
   initShell();
   initLayout();
+  initPlaybackSpeed();
   await restore();
   renderShell();
 }
