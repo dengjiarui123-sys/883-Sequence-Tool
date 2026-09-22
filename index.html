@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Video Sequence Packer</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">VSP</span>
+          <div>
+            <h1>Video Sequence Packer</h1>
+            <p class="brand-sub">绿幕 / 纯色底 · 抽帧 · 换色 · 整理 · 导出</p>
+          </div>
+        </div>
+        <nav class="steps" aria-label="制作步骤">
+          <button type="button" class="step" data-step="extract" id="nav-extract">
+            <span class="step-check" id="check-extract"></span>
+            <span>1 帧提取</span>
+          </button>
+          <button type="button" class="step" data-step="edit" id="nav-edit">
+            <span class="step-check" id="check-edit"></span>
+            <span>2 编辑整理</span>
+          </button>
+          <button type="button" class="step" data-step="export" id="nav-export">
+            <span class="step-check" id="check-export"></span>
+            <span>3 导出</span>
+          </button>
+        </nav>
+        <div class="top-actions">
+          <span class="project-label" id="project-label">未命名工程</span>
+          <button type="button" class="btn" id="btn-save">保存工程</button>
+        </div>
+      </header>
+
+      <section class="workspace" id="panel-extract">
+        <div class="stage">
+          <div class="video-stage" id="video-stage">
+            <video id="source-video" playsinline></video>
+            <div class="crop-layer" id="crop-layer" hidden>
+              <div class="crop-rect" id="crop-rect">
+                <span data-h="nw"></span><span data-h="n"></span><span data-h="ne"></span>
+                <span data-h="w"></span><span data-h="e"></span>
+                <span data-h="sw"></span><span data-h="s"></span><span data-h="se"></span>
+              </div>
+            </div>
+            <label class="drop-hint" id="drop-hint">
+              <input id="video-input" type="file" accept="video/mp4,video/webm,.mp4,.webm" hidden />
+              点击或拖入 mp4 / webm
+            </label>
+          </div>
+          <div class="timeline-row">
+            <button type="button" class="btn" id="btn-play">播放</button>
+            <input id="video-scrub" type="range" min="0" max="1" step="0.01" value="0" />
+            <span id="video-time">0.00 / 0.00</span>
+          </div>
+        </div>
+        <aside class="side">
+          <h2>提取参数</h2>
+          <dl class="meta" id="video-meta">
+            <div><dt>文件</dt><dd id="meta-name">—</dd></div>
+            <div><dt>分辨率</dt><dd id="meta-res">—</dd></div>
+            <div><dt>时长</dt><dd id="meta-dur">—</dd></div>
+          </dl>
+          <label class="field">起始秒
+            <input id="start-sec" type="number" min="0" step="0.01" value="0" />
+          </label>
+          <label class="field">结束秒
+            <input id="end-sec" type="number" min="0" step="0.01" value="0" />
+          </label>
+          <label class="field">抽帧帧率 <span id="fps-val">20</span> fps
+            <input id="fps" type="range" min="1" max="30" step="1" value="20" />
+          </label>
+          <p class="estimate" id="estimate">预估帧数 0　<code>floor((end − start) × fps) + 1</code></p>
+          <p class="hint">按时间抽样，不是解码器逐编码帧。浏览器 seek 可能落在关键帧附近，不要当成 Premiere 逐帧。</p>
+          <div class="progress" id="extract-progress" hidden>
+            <div class="progress-bar"><i id="extract-bar"></i></div>
+            <p id="extract-label">0 / 0</p>
+          </div>
+          <div class="side-actions">
+            <button type="button" class="btn btn-primary" id="btn-extract">开始提取</button>
+            <button type="button" class="btn" id="btn-cancel-extract" hidden>取消</button>
+          </div>
+          <p class="error" id="extract-error"></p>
+        </aside>
+      </section>
+
+      <section class="workspace" id="panel-edit" hidden>
+        <div class="subtabs">
+          <button type="button" class="subtab is-on" data-tab="edit">编辑</button>
+          <button type="button" class="subtab" data-tab="organize">整理</button>
+        </div>
+        <div class="edit-layout">
+          <div class="film-col">
+            <div class="film-head">
+              <h2>胶片条工作集</h2>
+              <span id="film-count">0 帧</span>
+            </div>
+            <div class="filmstrip" id="filmstrip" tabindex="0"></div>
+          </div>
+          <aside class="side" id="edit-side">
+            <div id="side-edit">
+              <h2>换色变透明</h2>
+              <p class="hint">单击胶片条设为当前帧，双击或点「编辑当前帧」进入编辑器。勾选标记控制是否在工作集内。</p>
+              <p id="current-frame-info">未选择帧</p>
+              <div class="side-actions">
+                <button type="button" class="btn btn-primary" id="btn-open-editor">编辑当前帧</button>
+                <button type="button" class="btn" id="btn-batch">批量应用到选中帧</button>
+              </div>
+            </div>
+            <div id="side-organize" hidden>
+              <h2>整理</h2>
+              <p class="hint">减帧与循环只改选中 / 未选中，未选中帧变暗但仍留在条上。移出才会从列表消失。</p>
+              <div class="side-actions wrap">
+                <button type="button" class="btn" id="btn-decimate">减帧…</button>
+                <button type="button" class="btn" id="btn-undo-decimate" disabled>撤销本次减帧</button>
+                <button type="button" class="btn" id="btn-find-loop">寻找循环帧</button>
+                <button type="button" class="btn" id="btn-apply-loop" disabled>裁剪到循环区间</button>
+                <button type="button" class="btn" id="btn-restore">全部恢复</button>
+                <button type="button" class="btn btn-danger" id="btn-remove">移出未选中</button>
+              </div>
+              <p id="loop-progress" class="hint" hidden></p>
+              <div id="loop-list" class="loop-list"></div>
+              <p class="hint">范围 A–B：保留 A 至 B 前一帧；B 为接缝对照帧（半开区间）。</p>
+              <div class="preview-box">
+                <canvas id="organize-preview" width="280" height="280"></canvas>
+                <div class="preview-bar">
+                  <button type="button" class="btn" id="btn-preview-play">预览选中</button>
+                  <span id="preview-info">只播放当前选中集合</span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="workspace" id="panel-export" hidden>
+        <aside class="side">
+          <h2>导出</h2>
+          <label class="field">格式
+            <select id="export-format">
+              <option value="zip">ZIP 散图</option>
+              <option value="spritesheet">Sprite Sheet 总图</option>
+            </select>
+          </label>
+          <label class="field">导出分辨率
+            <select id="cell-preset">
+              <option value="64">64</option>
+              <option value="128">128</option>
+              <option value="256" selected>256</option>
+              <option value="512">512</option>
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <div class="xy" id="cell-custom" hidden>
+            <label>宽 <input id="cell-w" type="number" min="8" max="8192" value="256" /></label>
+            <label>高 <input id="cell-h" type="number" min="8" max="8192" value="256" /></label>
+          </div>
+          <label class="field">缩放算法
+            <select id="smoothing">
+              <option value="smooth">平滑</option>
+              <option value="pixel">像素风格</option>
+            </select>
+          </label>
+          <label class="field">画面适配
+            <select id="fit">
+              <option value="contain">等比</option>
+              <option value="stretch">拉伸</option>
+            </select>
+          </label>
+          <label class="field">缩放 <span id="scale-val">20%</span>
+            <input id="scale" type="range" min="4" max="100" step="1" value="20" />
+          </label>
+          <label class="field">偏移 X
+            <input id="off-x" type="number" step="1" value="0" />
+          </label>
+          <label class="field">偏移 Y
+            <input id="off-y" type="number" step="1" value="0" />
+          </label>
+          <label class="field">填充
+            <select id="fill">
+              <option value="transparent">透明</option>
+              <option value="solid">纯色</option>
+            </select>
+          </label>
+          <label class="field" id="fill-color-field" hidden>纯色
+            <input id="fill-color" type="color" value="#000000" />
+          </label>
+          <label class="field" id="atlas-field">图集边长
+            <select id="atlas-size">
+              <option>512</option>
+              <option>1024</option>
+              <option selected>2048</option>
+              <option>4096</option>
+              <option>8192</option>
+            </select>
+          </label>
+          <label class="field">ZIP 文件名前缀
+            <input id="zip-prefix" type="text" placeholder="可选" />
+          </label>
+          <p class="hint" id="export-hint">只导出选中帧。Sprite Sheet 格子等大、间距 0，不做 trim。</p>
+          <div class="side-actions">
+            <button type="button" class="btn btn-primary" id="btn-download">导出 / 下载</button>
+          </div>
+        </aside>
+        <div class="stage export-stage">
+          <div class="preview-head">
+            <h2 id="export-preview-title">格子预览</h2>
+            <span id="sheet-page"></span>
+          </div>
+          <div class="export-preview-wrap">
+            <canvas id="export-preview"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <footer class="statusbar">
+        <span id="status-line">选择视频开始</span>
+        <span id="save-state">未保存</span>
+      </footer>
+    </div>
+
+    <div id="editor-root" class="editor-root" hidden>
+      <div class="editor">
+        <header class="editor-bar">
+          <strong>换色编辑器</strong>
+          <span id="editor-frame-name"></span>
+          <button type="button" class="btn" id="btn-editor-undo">撤销</button>
+          <button type="button" class="btn" id="btn-editor-cancel">取消</button>
+          <button type="button" class="btn btn-primary" id="btn-editor-apply">应用</button>
+        </header>
+        <div class="editor-body">
+          <div class="checker editor-canvas-wrap">
+            <canvas id="editor-canvas"></canvas>
+          </div>
+          <aside class="editor-tools">
+            <p class="hint">点击画面采样绿幕色。主图像未写入，调参只影响预览；点应用才改该帧。</p>
+            <div class="swatch-row">
+              <span class="swatch" id="sample-swatch"></span>
+              <span id="sample-rgb">未采样</span>
+            </div>
+            <label class="field">容差 <span id="tol-val">24</span>
+              <input id="tolerance" type="range" min="1" max="80" value="24" />
+            </label>
+            <label class="field">边缘清除 <span id="edge-val">8</span>
+              <input id="edge-cleanup" type="range" min="0" max="24" value="8" />
+            </label>
+            <p class="hint">替换目标：透明（alpha = 0）。预览棋盘格表示透明。</p>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+    <div id="decimate-root" class="overlay" hidden>
+      <div class="modal">
+        <h3>减帧</h3>
+        <p id="decimate-count"></p>
+        <label class="field">每 N 帧保留 1 帧（N ≥ 2）
+          <input id="decimate-n" type="number" min="2" max="30" value="2" />
+        </label>
+        <label class="field">保留位置
+          <select id="decimate-keep">
+            <option value="first">每组第 1 张</option>
+            <option value="last">每组最后 1 张</option>
+          </select>
+        </label>
+        <p id="decimate-preview">预计保留约 0 帧（剔除 0 帧，变为未选中，不会删除）</p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="decimate-cancel">取消</button>
+          <button type="button" class="btn btn-primary" id="decimate-ok">确认减帧</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-root" class="overlay" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

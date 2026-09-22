@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/
+workspace/
+*.local
+.DS_Store
+Thumbs.db

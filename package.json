@@ -1,0 +1,18 @@
+{
+  "name": "video-sequence-packer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.mjs",
+    "start": "node server/index.mjs",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "vite": "^6.3.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
