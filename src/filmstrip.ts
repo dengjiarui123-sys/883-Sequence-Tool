@@ -1,5 +1,6 @@
 import { frameUrl } from "./api";
 import * as history from "./history";
+import { showAppliedFramePreview } from "./organizeUi";
 import { persistSoon } from "./persist";
 import { currentFrame, selectedFrames, setState, state } from "./store";
 
@@ -77,11 +78,13 @@ export function initFilmstrip(): void {
       state.dirty = true;
       lastKey = "";
       setState({ currentFrameId: id });
+      showAppliedFramePreview(id);
       persistSoon();
       root.focus();
       return;
     }
     setState({ currentFrameId: id });
+    showAppliedFramePreview(id);
     root.focus();
   });
   root.addEventListener("dblclick", (ev) => {

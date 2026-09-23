@@ -18,7 +18,8 @@ import {
   rgbNear,
   serializeChromaOp,
 } from "./chroma";
-import { confirmDialog, imageDataFrom, imageDataToPng, loadImage, showToast } from "./dom";
+import { confirmDialog, imageDataFrom, imageDataToPng, isTypingTarget, loadImage, showToast } from "./dom";
+import { showAppliedFramePreview } from "./organizeUi";
 import { persistNow } from "./persist";
 import * as history from "./history";
 import { currentFrame, selectedFrames, setState, state } from "./store";
@@ -503,6 +504,13 @@ async function ensureMatte(force = false): Promise<boolean> {
       hideBirefProgress();
       return false;
     }
+    if (!info.ready && (info.message === "检查超时" || info.error === "检查超时")) {
+      hideBirefProgress();
+      setBirefStatus("环境检查超时，已安装的依赖不用重装");
+      setState({ status: "BiRefNet 环境检查超时，请再点一次开始推理" });
+      refreshPreview();
+      return false;
+    }
     if (!info.ready) {
       hideBirefProgress();
       const modelUrl = info.modelUrl || BIREFNET_MODEL_URL;
@@ -669,6 +677,7 @@ async function openEditor(): Promise<void> {
   clearEditorLocal();
   rememberEditorBaseline();
   syncBirefRunBtn();
+  syncEditorNav();
   requestAnimationFrame(() => zoomToFit());
   if (loaded.copied) {
     setState({ status: "本工程无抽出原图备份，已用当前帧补了一份" });
@@ -698,6 +707,62 @@ function replaceOps(frame: { ops: FrameOp[] }, op: FrameOp): void {
   if (!frame.ops.some((o) => o.type === "birefNet" && opsEqual(o, op))) frame.ops.push(op);
 }
 
+function editorHasPending(): boolean {
+  if (!original) return false;
+  if (method === "birefNet") return matteAlpha != null;
+  return currentChromaOp() != null;
+}
+
+function syncEditorNav(): void {
+  const frames = state.project?.frames ?? [];
+  const pos = frames.findIndex((f) => f.id === state.currentFrameId);
+  const prev = document.getElementById("btn-editor-prev") as HTMLButtonElement | null;
+  const next = document.getElementById("btn-editor-next") as HTMLButtonElement | null;
+  if (prev) prev.disabled = pos <= 0;
+  if (next) next.disabled = pos < 0 || pos >= frames.length - 1;
+}
+
+function editorOutput(): { op: FrameOp; output: ImageData } | null {
+  if (!original) return null;
+  if (method === "birefNet") {
+    if (!matteAlpha) return null;
+    const op = currentBirefOp();
+    return { op, output: applyBirefNet(original, matteAlpha, op) };
+  }
+  const op = currentChromaOp();
+  if (!op) return null;
+  return { op, output: applyChromaKey(original, op) };
+}
+
+async function commitEditorFrame(): Promise<boolean> {
+  const project = state.project;
+  const frame = currentFrame();
+  const built = editorOutput();
+  if (!project || !frame || !built) return false;
+  if (matteBusy) {
+    setState({ status: "正在推理，请稍候" });
+    return false;
+  }
+  try {
+    const blob = await imageDataToPng(built.output);
+    await putFrame(project.id, fileName(frame.file), blob);
+    replaceOps(frame, built.op);
+    state.dirty = true;
+    history.clear();
+    clearEditorLocal();
+    setState({
+      bust: Date.now(),
+      status: `第 ${frame.index + 1} 帧已应用${method === "birefNet" ? " BiRefNet" : "色度"}`,
+    });
+    await persistNow();
+    showAppliedFramePreview(frame.id);
+    return true;
+  } catch (err) {
+    setState({ status: `应用失败：${(err as Error).message}` });
+    return false;
+  }
+}
+
 async function applyEditor(): Promise<void> {
   const project = state.project;
   const frame = currentFrame();
@@ -709,22 +774,13 @@ async function applyEditor(): Promise<void> {
     setState({ status: "正在推理，请稍候" });
     return;
   }
-  let op: FrameOp | null = null;
-  let output: ImageData | null = null;
-  if (method === "birefNet") {
-    if (!matteAlpha) {
-      setState({ status: "请先完成 BiRefNet 推理" });
-      return;
-    }
-    op = currentBirefOp();
-    output = applyBirefNet(original, matteAlpha, op);
-  } else {
-    op = currentChromaOp();
-    if (!op) {
-      setState({ status: "请先点击画面采样颜色" });
-      return;
-    }
-    output = applyChromaKey(original, op);
+  if (method === "birefNet" && !matteAlpha) {
+    setState({ status: "请先完成 BiRefNet 推理" });
+    return;
+  }
+  if (method !== "birefNet" && !currentChromaOp()) {
+    setState({ status: "请先点击画面采样颜色" });
+    return;
   }
   const ok = await confirmDialog({
     title: "应用抠图",
@@ -736,27 +792,64 @@ async function applyEditor(): Promise<void> {
     danger: true,
   });
   if (!ok) return;
+  if (await commitEditorFrame()) closeEditor();
+}
+
+let frameNavBusy = false;
+
+async function shiftEditorFrame(delta: -1 | 1): Promise<void> {
+  if (frameNavBusy) return;
+  const root = document.getElementById("editor-root");
+  if (!root || root.hidden) return;
+  const project = state.project;
+  const frame = currentFrame();
+  if (!project || !frame || !original) return;
+  if (matteBusy) {
+    setState({ status: "正在推理，请稍候" });
+    return;
+  }
+  const pos = project.frames.findIndex((f) => f.id === frame.id);
+  const target = project.frames[pos + delta];
+  if (!target) return;
+  frameNavBusy = true;
   try {
-    const blob = await imageDataToPng(output);
-    await putFrame(project.id, fileName(frame.file), blob);
-    replaceOps(frame, op);
-    state.dirty = true;
-    history.clear();
-    clearEditorLocal();
-    closeEditor();
-    setState({
-      bust: Date.now(),
-      status: `第 ${frame.index + 1} 帧已应用${method === "birefNet" ? " BiRefNet" : "色度"}`,
-    });
-    await persistNow();
-  } catch (err) {
-    setState({ status: `应用失败：${(err as Error).message}` });
+    if (editorHasPending()) {
+      const apply = await confirmDialog({
+        title: "有未应用的更改",
+        body: "切换帧前是否应用本次修改？应用会写入当前帧并打开相邻帧；暂不应用则留在抠图编辑器。",
+        ok: "应用",
+        cancel: "暂不应用",
+      });
+      if (!apply) return;
+      const wrote = await commitEditorFrame();
+      if (!wrote) return;
+    }
+    setState({ currentFrameId: target.id });
+    showAppliedFramePreview(target.id);
+    await openEditor();
+  } finally {
+    frameNavBusy = false;
+    syncEditorNav();
   }
 }
 
-async function loadOriginalForTarget(projectId: string, file: string): Promise<ImageData> {
-  const loaded = await loadEditorSource(projectId, file);
-  return loaded.data;
+async function loadBatchPlate(projectId: string, file: string, alreadyKeyed: boolean): Promise<ImageData> {
+  const origRes = await fetch(originalFrameUrl(projectId, file, state.bust));
+  if (origRes.ok) return blobToImageData(await origRes.blob());
+  if (alreadyKeyed) throw new Error("无抽出原图");
+  const workRes = await fetch(frameUrl(projectId, file, state.bust));
+  if (!workRes.ok) throw new Error("无法读取该帧");
+  const blob = await workRes.blob();
+  try {
+    await putOriginalFrame(projectId, file, blob);
+  } catch {
+    /* this frame has never been keyed; still key the working image */
+  }
+  return blobToImageData(blob);
+}
+
+function cloneOps(ops: FrameOp[]): FrameOp[] {
+  return ops.map((op) => (op.type === "birefNet" ? { ...op } : serializeChromaOp(op)));
 }
 
 function batchOpsForCurrent(): FrameOp[] {
@@ -787,7 +880,7 @@ export async function batchApply(): Promise<void> {
   const kind = ops[0].type === "birefNet" ? "BiRefNet" : "色度";
   const ok = await confirmDialog({
     title: "批量应用",
-    body: `将 ${ops.length} 个操作应用到 ${targets.length} 帧？输入是各帧当前工作图（已抠过的会接着扣）。含当前帧时，已应用过的同一条会跳过。色度：请确认各帧幕布接近。BiRefNet：将逐帧推理，可能较慢。`,
+    body: `从各帧抽出原图重新抠图，写入 ${targets.length} 帧，盖掉已经叠过一次的结果。色度：请确认各帧幕布接近。BiRefNet：将逐帧推理，可能较慢。`,
     ok: "开始批量",
   });
   if (!ok) return;
@@ -804,30 +897,27 @@ export async function batchApply(): Promise<void> {
       const seq = target.index + 1;
       showBatchProgress(done, targets.length, `正在处理第 ${seq} 帧…`);
       try {
-        const pending = ops.filter((op) => !target.ops.some((existing) => opsEqual(existing, op)));
-        if (pending.length) {
-          const dataIn = await loadOriginalForTarget(project.id, fileName(target.file));
-          let data = dataIn;
-          for (const op of pending) {
-            if (op.type === "chromaKey") {
-              data = applyChromaKey(data, op);
-            } else {
-              const key = fileName(target.file);
-              let alpha = matteCache.get(key);
-              if (!alpha) {
-                const png = await imageDataToPng(dataIn);
-                const result = await requestMatte(png);
-                const gray = await blobToImageData(result.blob);
-                alpha = alphaFromGrayImageData(gray);
-                matteCache.set(key, alpha);
-              }
-              data = applyBirefNet(dataIn, alpha, op);
+        const file = fileName(target.file);
+        const dataIn = await loadBatchPlate(project.id, file, target.ops.length > 0);
+        let data = dataIn;
+        for (const op of ops) {
+          if (op.type === "chromaKey") {
+            data = applyChromaKey(data, op);
+          } else {
+            let alpha = matteCache.get(file);
+            if (!alpha) {
+              const png = await imageDataToPng(dataIn);
+              const result = await requestMatte(png);
+              const gray = await blobToImageData(result.blob);
+              alpha = alphaFromGrayImageData(gray);
+              matteCache.set(file, alpha);
             }
+            data = applyBirefNet(dataIn, alpha, op);
           }
-          const blob = await imageDataToPng(data);
-          await putFrame(project.id, fileName(target.file), blob);
-          for (const op of pending) replaceOps(target, op);
         }
+        const blob = await imageDataToPng(data);
+        await putFrame(project.id, file, blob);
+        target.ops = cloneOps(ops);
       } catch {
         failed.push(seq);
       }
@@ -901,6 +991,18 @@ export function initEditor(): void {
   });
   document.getElementById("btn-editor-cancel")!.addEventListener("click", () => closeEditor());
   document.getElementById("btn-editor-apply")!.addEventListener("click", () => void applyEditor());
+  document.getElementById("btn-editor-prev")!.addEventListener("click", () => void shiftEditorFrame(-1));
+  document.getElementById("btn-editor-next")!.addEventListener("click", () => void shiftEditorFrame(1));
+  window.addEventListener("keydown", (ev) => {
+    if (document.getElementById("editor-root")!.hidden) return;
+    if (isTypingTarget(ev.target)) return;
+    if (!document.getElementById("modal-root")!.hidden) return;
+    const progress = document.getElementById("biref-progress-root");
+    if (progress && !progress.hidden) return;
+    if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+    ev.preventDefault();
+    void shiftEditorFrame(ev.key === "ArrowLeft" ? -1 : 1);
+  });
   document.getElementById("btn-editor-undo")!.addEventListener("click", () => {
     undoEditorLocal();
   });

@@ -10,7 +10,7 @@
     <div id="app">
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark">883</span>
+          <img class="brand-mark" src="/brand.png" alt="883" />
           <div>
             <h1>883 Sequence Tool</h1>
             <p class="brand-sub">绿幕 / 纯色底 · 抽帧 · 换色 · 整理 · 导出</p>
@@ -148,21 +148,27 @@
               <p id="loop-progress" class="hint" hidden></p>
               <div id="loop-list" class="loop-list"></div>
               <p class="hint">点方案可预览范围。范围按胶片序号显示（即格子上的数字）。点方案上的「应用」后关闭列表；之后可用格子上的 ✓ 把帧压黑或重新点亮，减帧和寻找循环都按当前点亮集合计算。</p>
-              <div class="splitter splitter-row" id="split-organize-preview" role="separator" aria-orientation="horizontal" aria-label="调整预览高度" title="拖拽调整高度，双击恢复默认"></div>
-              <div class="preview-box">
+            </div>
+            <div class="splitter splitter-row" id="split-organize-preview" role="separator" aria-orientation="horizontal" aria-label="调整预览高度" title="拖拽调整高度，双击恢复默认"></div>
+            <div class="preview-box">
+              <div class="preview-stage">
                 <canvas id="organize-preview" width="280" height="280"></canvas>
-                <div class="preview-bar timeline-row">
-                  <button type="button" class="btn" id="btn-preview-play">播放动画</button>
-                  <input id="preview-scrub" type="range" min="0" max="0" step="1" value="0" aria-label="播放进度" />
-                  <span id="preview-info">0 / 0</span>
+                <div class="preview-zoom">
+                  <button type="button" class="preview-zoom-btn" id="btn-preview-zoom-out" title="缩小" disabled>−</button>
+                  <button type="button" class="preview-zoom-btn" id="btn-preview-zoom-in" title="放大">+</button>
                 </div>
-                <div class="speed-row speed-row-dark">
-                  <span class="speed-label">播放速度</span>
-                  <span class="speed-end">慢</span>
-                  <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
-                  <span class="speed-end">快</span>
-                  <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
-                </div>
+              </div>
+              <div class="preview-bar timeline-row">
+                <button type="button" class="btn" id="btn-preview-play">播放动画</button>
+                <input id="preview-scrub" type="range" min="0" max="0" step="1" value="0" aria-label="播放进度" />
+                <span id="preview-info">0 / 0</span>
+              </div>
+              <div class="speed-row speed-row-dark">
+                <span class="speed-label">播放速度</span>
+                <span class="speed-end">慢</span>
+                <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
+                <span class="speed-end">快</span>
+                <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
               </div>
             </div>
           </aside>
@@ -260,7 +266,9 @@
       <div class="editor">
         <header class="editor-bar">
           <strong>抠图编辑器</strong>
-          <span id="editor-frame-name"></span>
+          <div class="editor-frame-nav">
+            <span id="editor-frame-name"></span>
+          </div>
           <div class="editor-zoom">
             <button type="button" class="btn" id="btn-editor-zoom-out" title="缩小">−</button>
             <span id="editor-zoom-val">适应</span>
@@ -272,8 +280,16 @@
           <button type="button" class="btn btn-primary" id="btn-editor-apply">应用</button>
         </header>
         <div class="editor-body">
-          <div class="checker editor-canvas-wrap">
-            <canvas id="editor-canvas"></canvas>
+          <div class="editor-stage">
+            <div class="checker editor-canvas-wrap">
+              <canvas id="editor-canvas"></canvas>
+            </div>
+            <button type="button" class="editor-side-nav is-prev" id="btn-editor-prev" title="上一帧（←）" aria-label="上一帧">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 3.5 6 12l10.5 8.5z"/></svg>
+            </button>
+            <button type="button" class="editor-side-nav is-next" id="btn-editor-next" title="下一帧（→）" aria-label="下一帧">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3.5 18 12 7.5 20.5z"/></svg>
+            </button>
           </div>
           <aside class="editor-tools">
             <div class="field">方法

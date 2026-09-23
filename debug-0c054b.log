@@ -1,0 +1,6 @@
+{"sessionId": "0c054b", "hypothesisId": "A", "location": "birefnet_worker.py:status", "message": "status enter", "data": {"executable": "E:\\AI_Tool\\video-sequence-packer\\video-sequence-packer\\workspace\\.birefnet-venv\\Scripts\\python.exe"}, "timestamp": 1790145696639}
+{"sessionId": "0c054b", "hypothesisId": "E", "location": "birefnet_worker.py:status", "message": "imports checked", "data": {"missing": [], "elapsedMs": 3356}, "timestamp": 1790145699996}
+{"sessionId": "0c054b", "hypothesisId": "B", "location": "birefnet_worker.py:status", "message": "torch imported", "data": {"elapsedMs": 3357}, "timestamp": 1790145699996}
+{"sessionId": "0c054b", "hypothesisId": "C", "location": "birefnet_worker.py:status", "message": "cuda probed", "data": {"cuda": true, "elapsedMs": 3371}, "timestamp": 1790145700011}
+{"sessionId": "0c054b", "hypothesisId": "D", "location": "birefnet_worker.py:status", "message": "model cache checked", "data": {"model": true, "elapsedMs": 3372}, "timestamp": 1790145700012}
+{"sessionId": "0c054b", "hypothesisId": "A", "location": "birefnet_worker.py:status", "message": "status ready", "data": {"ready": true, "elapsedMs": 3372}, "timestamp": 1790145700012}

@@ -11,6 +11,7 @@ const VENV_DIR = path.join(ROOT, "workspace", ".birefnet-venv");
 const DOWNLOAD_MS = 15 * 60 * 1000;
 const INSTALL_MS = 45 * 60 * 1000;
 const INFER_MS = 3 * 60 * 1000;
+const STATUS_MS = 120 * 1000;
 
 function json(res, status, body) {
   const data = JSON.stringify(body);
@@ -27,6 +28,7 @@ let workerBuf = "";
 let rpcId = 0;
 const pending = new Map();
 let installBusy = false;
+let statusCache = null;
 
 function venvPythonPath() {
   return process.platform === "win32"
@@ -309,13 +311,31 @@ export async function handleMatteApi(req, res, parts, readBody) {
   if (parts[0] !== "api" || parts[1] !== "matte") return false;
 
   if (req.method === "GET" && parts.length === 3 && parts[2] === "status") {
+    const py = findPython();
+    if (statusCache?.ready) {
+      json(res, 200, statusCache);
+      return true;
+    }
     try {
-      const ran = await runWorkerOnce(["status"], 20000);
+      const ran = await runWorkerOnce(["status"], STATUS_MS);
       const body = parseLastJson(ran.stdout) || noPythonStatus();
+      if (body.ready) statusCache = body;
       if (!findPython()) json(res, 200, noPythonStatus());
       else json(res, 200, body);
     } catch (err) {
-      json(res, 200, { ...noPythonStatus(), message: err?.message || "未安装" });
+      const timedOut = err?.message === "超时";
+      json(res, 200, timedOut
+        ? {
+            python: Boolean(py),
+            torch: false,
+            cuda: false,
+            model: false,
+            ready: false,
+            message: "检查超时",
+            error: "检查超时",
+            modelUrl: "https://huggingface.co/ZhengPeng7/BiRefNet_HR-matting",
+          }
+        : { ...noPythonStatus(), message: err?.message || "未安装" });
     }
     return true;
   }
@@ -355,6 +375,7 @@ export async function handleMatteApi(req, res, parts, readBody) {
       send({ phase: "status", line: "已开始下载安装…", percent: 1 });
       stopWorker();
       pythonCmd = null;
+      statusCache = null;
       await ensureVenv();
       send({ phase: "status", line: "虚拟环境已就绪，开始安装依赖…", percent: 4 });
       await streamWorker(["install"], INSTALL_MS, (line) => {

@@ -12,6 +12,14 @@ let previewIndex = 0;
 let previewIds: string[] = [];
 let playing = false;
 let lastPreviewId: string | null = null;
+let drawToken = 0;
+let previewImage: HTMLImageElement | null = null;
+let previewImageKey = "";
+let previewZoom = 1;
+let previewPanX = 0;
+let previewPanY = 0;
+const MIN_PREVIEW_ZOOM = 1;
+const MAX_PREVIEW_ZOOM = 8;
 
 function fileName(frameFile: string): string {
   return frameFile.split("/").pop()!;
@@ -212,21 +220,124 @@ async function applyLoopAt(index: number): Promise<void> {
   persistSoon();
 }
 
+function previewCanvas(): HTMLCanvasElement | null {
+  return document.getElementById("organize-preview") as HTMLCanvasElement | null;
+}
+
+function previewFit(img: HTMLImageElement, canvas: HTMLCanvasElement): number {
+  return Math.min(canvas.width / img.width, canvas.height / img.height);
+}
+
+function clampPreviewPan(img: HTMLImageElement, canvas: HTMLCanvasElement): void {
+  if (previewZoom <= MIN_PREVIEW_ZOOM + 0.001) {
+    previewZoom = MIN_PREVIEW_ZOOM;
+    previewPanX = 0;
+    previewPanY = 0;
+    return;
+  }
+  const scale = previewFit(img, canvas) * previewZoom;
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  const margin = 48 * (window.devicePixelRatio || 1);
+  const x0 = (canvas.width - dw) / 2;
+  const y0 = (canvas.height - dh) / 2;
+  previewPanX = Math.min(canvas.width - margin - x0, Math.max(margin - dw - x0, previewPanX));
+  previewPanY = Math.min(canvas.height - margin - y0, Math.max(margin - dh - y0, previewPanY));
+}
+
+function syncPreviewZoomCursor(canvas: HTMLCanvasElement): void {
+  const zoomed = previewZoom > MIN_PREVIEW_ZOOM + 0.001;
+  canvas.classList.toggle("is-zoomed", zoomed);
+  const outBtn = document.getElementById("btn-preview-zoom-out") as HTMLButtonElement | null;
+  const inBtn = document.getElementById("btn-preview-zoom-in") as HTMLButtonElement | null;
+  if (outBtn) outBtn.disabled = !zoomed;
+  if (inBtn) inBtn.disabled = previewZoom >= MAX_PREVIEW_ZOOM - 0.001;
+}
+
+function zoomPreviewBy(factor: number): void {
+  const canvas = previewCanvas();
+  if (!canvas?.width || !canvas.height) return;
+  zoomPreviewAt(canvas.width / 2, canvas.height / 2, factor);
+}
+
+function paintPreview(): void {
+  const canvas = previewCanvas();
+  const ctx = canvas?.getContext("2d");
+  const img = previewImage;
+  if (!canvas || !ctx || !img || !canvas.width || !canvas.height) return;
+  clampPreviewPan(img, canvas);
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const scale = previewFit(img, canvas) * previewZoom;
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, (canvas.width - dw) / 2 + previewPanX, (canvas.height - dh) / 2 + previewPanY, dw, dh);
+  syncPreviewZoomCursor(canvas);
+}
+
+function zoomPreviewAt(canvasX: number, canvasY: number, factor: number): void {
+  const canvas = previewCanvas();
+  const img = previewImage;
+  if (!canvas || !img || !canvas.width || !canvas.height) return;
+  const prevScale = previewFit(img, canvas) * previewZoom;
+  const prevX = (canvas.width - img.width * prevScale) / 2 + previewPanX;
+  const prevY = (canvas.height - img.height * prevScale) / 2 + previewPanY;
+  const ix = (canvasX - prevX) / prevScale;
+  const iy = (canvasY - prevY) / prevScale;
+  previewZoom = Math.min(MAX_PREVIEW_ZOOM, Math.max(MIN_PREVIEW_ZOOM, previewZoom * factor));
+  const nextScale = previewFit(img, canvas) * previewZoom;
+  previewPanX = canvasX - ix * nextScale - (canvas.width - img.width * nextScale) / 2;
+  previewPanY = canvasY - iy * nextScale - (canvas.height - img.height * nextScale) / 2;
+  paintPreview();
+}
+
+function resetPreviewZoom(): void {
+  previewZoom = MIN_PREVIEW_ZOOM;
+  previewPanX = 0;
+  previewPanY = 0;
+  paintPreview();
+}
+
 async function drawPreviewFrame(id: string): Promise<void> {
   const project = state.project;
   const frame = project?.frames.find((f) => f.id === id);
-  const canvas = document.getElementById("organize-preview") as HTMLCanvasElement;
-  const ctx = canvas.getContext("2d");
-  if (!project || !frame || !ctx) return;
+  const canvas = previewCanvas();
+  if (!project || !frame || !canvas) return;
   lastPreviewId = id;
+  const imgKey = `${project.id}:${id}:${state.bust}`;
+  if (previewImage && previewImageKey === imgKey) {
+    paintPreview();
+    syncPreviewScrub();
+    return;
+  }
+  const token = ++drawToken;
   const img = await loadImage(frameUrl(project.id, fileName(frame.file), state.bust));
-  ctx.fillStyle = "#111";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
-  const dw = img.width * scale;
-  const dh = img.height * scale;
-  ctx.drawImage(img, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+  if (token !== drawToken) return;
+  previewImage = img;
+  previewImageKey = imgKey;
+  paintPreview();
   syncPreviewScrub();
+}
+
+export function showAppliedFramePreview(id: string): void {
+  const frame = state.project?.frames.find((f) => f.id === id);
+  if (!frame) return;
+  stopPreview();
+  const selected = selectedFrames();
+  const at = selected.findIndex((f) => f.id === id);
+  if (at >= 0) {
+    previewIds = selected.map((f) => f.id);
+    previewIndex = at;
+  } else {
+    previewIds = [id];
+    previewIndex = 0;
+  }
+  lastPreviewId = id;
+  syncPreviewScrub();
+  if (state.step !== "edit") return;
+  syncOrganizePreviewSize();
+  void drawPreviewFrame(id);
 }
 
 export function syncOrganizePreviewSize(): void {
@@ -259,16 +370,26 @@ function queueSequenceNotice(): void {
 function syncPreviewScrub(): void {
   const ids = playing ? previewIds : selectedFrames().map((frame) => frame.id);
   const total = ids.length;
-  const index = total ? Math.min(previewIndex, total - 1) : 0;
+  let index = total ? Math.min(previewIndex, total - 1) : 0;
+  if (!playing && lastPreviewId) {
+    const at = ids.indexOf(lastPreviewId);
+    if (at >= 0) index = at;
+  }
   const scrub = document.getElementById("preview-scrub") as HTMLInputElement | null;
   if (scrub) {
     scrub.min = "0";
     scrub.max = String(Math.max(0, total - 1));
-    scrub.value = String(index);
+    scrub.value = String(total ? index : 0);
     scrub.disabled = total === 0;
   }
   const info = document.getElementById("preview-info");
-  if (info) info.textContent = total ? `${index + 1} / ${total}` : "没有可播放的选中帧";
+  if (!info) return;
+  if (!playing && lastPreviewId && ids.indexOf(lastPreviewId) < 0) {
+    const frame = state.project?.frames.find((f) => f.id === lastPreviewId);
+    info.textContent = frame ? `第 ${frame.index + 1} 帧` : "0 / 0";
+    return;
+  }
+  info.textContent = total ? `${index + 1} / ${total}` : "没有可播放的选中帧";
 }
 
 function stopPreview(resetSequence = false): void {
@@ -360,6 +481,52 @@ export function initOrganize(): void {
   document.getElementById("btn-remove")!.addEventListener("click", () => void removeUnselected());
   document.getElementById("btn-find-loop")!.addEventListener("click", () => void findLoops());
   document.getElementById("btn-preview-play")!.addEventListener("click", toggleOrganizePreview);
+  document.getElementById("btn-preview-zoom-in")!.addEventListener("click", () => zoomPreviewBy(1.25));
+  document.getElementById("btn-preview-zoom-out")!.addEventListener("click", () => zoomPreviewBy(1 / 1.25));
+  const preview = document.getElementById("organize-preview") as HTMLCanvasElement;
+  preview.addEventListener(
+    "wheel",
+    (ev) => {
+      ev.preventDefault();
+      const rect = preview.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+      zoomPreviewAt(
+        (ev.clientX - rect.left) * (preview.width / rect.width),
+        (ev.clientY - rect.top) * (preview.height / rect.height),
+        factor,
+      );
+    },
+    { passive: false },
+  );
+  preview.addEventListener("dblclick", () => resetPreviewZoom());
+  let panning = false;
+  let panLastX = 0;
+  let panLastY = 0;
+  preview.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || previewZoom <= MIN_PREVIEW_ZOOM + 0.001) return;
+    panning = true;
+    panLastX = ev.clientX;
+    panLastY = ev.clientY;
+    preview.classList.add("is-panning");
+    preview.setPointerCapture(ev.pointerId);
+  });
+  preview.addEventListener("pointermove", (ev) => {
+    if (!panning) return;
+    const rect = preview.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    previewPanX += (ev.clientX - panLastX) * (preview.width / rect.width);
+    previewPanY += (ev.clientY - panLastY) * (preview.height / rect.height);
+    panLastX = ev.clientX;
+    panLastY = ev.clientY;
+    paintPreview();
+  });
+  const endPan = () => {
+    panning = false;
+    preview.classList.remove("is-panning");
+  };
+  preview.addEventListener("pointerup", endPan);
+  preview.addEventListener("pointercancel", endPan);
   (document.getElementById("preview-scrub") as HTMLInputElement).addEventListener("input", (ev) => {
     if (!previewIds.length) previewIds = selectedFrames().map((frame) => frame.id);
     if (!previewIds.length) return;
@@ -397,9 +564,10 @@ export function syncOrganize(): void {
     stopPreview(true);
     queueSequenceNotice();
   }
-  if (state.editTab === "organize") {
-    renderLoopList();
-    syncOrganizePreviewSize();
-    if (!playing) syncPreviewScrub();
-  }
+  if (state.editTab === "organize") renderLoopList();
+  if (state.step !== "edit") return;
+  if (!lastPreviewId && state.currentFrameId) lastPreviewId = state.currentFrameId;
+  syncOrganizePreviewSize();
+  if (!playing && lastPreviewId) void drawPreviewFrame(lastPreviewId);
+  else if (!playing) syncPreviewScrub();
 }
