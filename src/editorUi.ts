@@ -22,18 +22,41 @@ import { confirmDialog, imageDataFrom, imageDataToPng, isTypingTarget, loadImage
 import { showAppliedFramePreview } from "./organizeUi";
 import { persistNow } from "./persist";
 import * as history from "./history";
+import {
+  bakeStroke,
+  cloneRefine,
+  compositeRefine,
+  createRefine,
+  stampRefine,
+  unionRect,
+  type PixelRect,
+  type RefineBuffers,
+} from "./refine";
 import { currentFrame, selectedFrames, setState, state } from "./store";
 import type { BirefNetOp, ChromaOp, FrameOp } from "./types";
 
 type MatteMethod = "chroma" | "birefNet";
 type PreviewBg = "checker" | "white" | "black" | "gray";
+type EditorTool = "sample" | "brush" | "eraser";
+type LoupeScale = 2 | 4 | 8;
 type Rgb = [number, number, number];
 type Sample = { x: number; y: number; color: Rgb };
 
 let original: ImageData | null = null;
+let plate: ImageData | null = null;
+let matted: ImageData | null = null;
 let preview: ImageData | null = null;
+let refine: RefineBuffers | null = null;
+let stroke: RefineBuffers | null = null;
+let refineRev = 0;
+let refineMarks = 0;
 let samples: Sample[] = [];
 let method: MatteMethod = "chroma";
+let tool: EditorTool = "sample";
+let loupeScale: LoupeScale = 4;
+let painting = false;
+let lastDab: { x: number; y: number } | null = null;
+let loupePoint: { x: number; y: number } | null = null;
 let previewBg: PreviewBg = "checker";
 let matteAlpha: Float32Array | null = null;
 let matteFile: string | null = null;
@@ -48,6 +71,9 @@ type EditorSnap = {
   despill: number;
   threshold: number;
   feather: number;
+  refine: RefineBuffers | null;
+  refineRev: number;
+  refineMarks: number;
 };
 
 const EDITOR_MAX = 15;
@@ -62,6 +88,9 @@ let editorBaseline: EditorSnap = {
   despill: 8,
   threshold: 0.5,
   feather: 1,
+  refine: null,
+  refineRev: 0,
+  refineMarks: 0,
 };
 
 function canvas(): HTMLCanvasElement {
@@ -158,14 +187,65 @@ function cloneSamples(list: Sample[]): Sample[] {
   return list.map((s) => ({ x: s.x, y: s.y, color: [s.color[0], s.color[1], s.color[2]] }));
 }
 
-function paint(data: ImageData): void {
+function paint(data: ImageData, rect?: PixelRect): void {
   const c = canvas();
-  c.width = data.width;
-  c.height = data.height;
+  const resized = c.width !== data.width || c.height !== data.height;
+  if (resized) {
+    c.width = data.width;
+    c.height = data.height;
+  }
   const ctx = c.getContext("2d");
   if (!ctx) return;
-  ctx.putImageData(data, 0, 0);
-  applyCanvasCss();
+  if (!resized && rect) {
+    const w = rect.x1 - rect.x0 + 1;
+    const h = rect.y1 - rect.y0 + 1;
+    ctx.putImageData(data, 0, 0, rect.x0, rect.y0, w, h);
+  } else {
+    ctx.putImageData(data, 0, 0);
+  }
+  if (resized) applyCanvasCss();
+}
+
+function brushDiameter(): number {
+  return Math.max(1, Math.min(128, inputVal("brush-size") || 10));
+}
+
+function brushHardness(): number {
+  return Math.max(0, Math.min(100, inputVal("brush-hardness")));
+}
+
+function hasRefine(): boolean {
+  return refineMarks > 0 || stroke != null;
+}
+
+function resetRefine(): void {
+  refine = null;
+  stroke = null;
+  refineRev = 0;
+  refineMarks = 0;
+}
+
+function recomputeMatted(): void {
+  if (!original) {
+    matted = null;
+    return;
+  }
+  if (method === "birefNet") {
+    matted = matteAlpha ? applyBirefNet(original, matteAlpha, currentBirefOp()) : original;
+    return;
+  }
+  const op = currentChromaOp();
+  matted = op ? applyChromaKey(original, op) : original;
+}
+
+function present(rect?: PixelRect): void {
+  if (!matted || !plate) return;
+  if (!preview || preview.width !== matted.width || preview.height !== matted.height) {
+    preview = new ImageData(matted.width, matted.height);
+    rect = undefined;
+  }
+  compositeRefine(matted, plate, refine, stroke, preview, rect);
+  paint(preview, rect);
 }
 
 function currentChromaOp(): ChromaOp | null {
@@ -241,14 +321,9 @@ function renderSwatches(): void {
 }
 
 function refreshPreview(): void {
-  if (!original) return;
-  if (method === "birefNet") {
-    preview = matteAlpha ? applyBirefNet(original, matteAlpha, currentBirefOp()) : original;
-  } else {
-    const op = currentChromaOp();
-    preview = op ? applyChromaKey(original, op) : original;
-  }
-  paint(preview);
+  if (!original || !plate) return;
+  recomputeMatted();
+  present();
 }
 
 function captureEditor(): EditorSnap {
@@ -262,6 +337,9 @@ function captureEditor(): EditorSnap {
     despill,
     threshold,
     feather,
+    refine: refine ? cloneRefine(refine) : null,
+    refineRev,
+    refineMarks,
   };
 }
 
@@ -278,6 +356,12 @@ function applyEditorSnap(snap: EditorSnap): void {
   el<HTMLInputElement>("biref-th-val").value = snap.threshold.toFixed(2);
   el<HTMLInputElement>("biref-feather-val").value = String(snap.feather);
   setMethodUi(snap.method);
+  refine = snap.refine ? cloneRefine(snap.refine) : null;
+  refineRev = snap.refineRev;
+  refineMarks = snap.refineMarks;
+  stroke = null;
+  painting = false;
+  lastDab = null;
   renderSwatches();
   refreshPreview();
   syncBirefRunBtn();
@@ -313,6 +397,7 @@ function snapsEqual(a: EditorSnap, b: EditorSnap): boolean {
     a.despill === b.despill &&
     a.threshold === b.threshold &&
     a.feather === b.feather &&
+    a.refineRev === b.refineRev &&
     JSON.stringify(a.samples) === JSON.stringify(b.samples)
   );
 }
@@ -488,6 +573,14 @@ async function loadEditorSource(projectId: string, file: string): Promise<{ data
   return { data: await blobToImageData(blob), copied };
 }
 
+async function loadPlate(projectId: string, file: string, fallback: ImageData): Promise<ImageData> {
+  const res = await fetch(originalFrameUrl(projectId, file, state.bust));
+  if (!res.ok) return fallback;
+  const data = await blobToImageData(await res.blob());
+  if (data.width !== fallback.width || data.height !== fallback.height) return fallback;
+  return data;
+}
+
 async function ensureMatte(force = false): Promise<boolean> {
   const project = state.project;
   const frame = currentFrame();
@@ -652,7 +745,10 @@ async function openEditor(): Promise<void> {
   }
   const loaded = await loadEditorSource(project.id, fileName(frame.file));
   original = loaded.data;
-  preview = original;
+  plate = await loadPlate(project.id, fileName(frame.file), original);
+  matted = original;
+  preview = null;
+  resetRefine();
   samples = [];
   matteAlpha = null;
   matteFile = null;
@@ -670,9 +766,10 @@ async function openEditor(): Promise<void> {
   el<HTMLInputElement>("biref-feather-val").value = "1";
   setBirefStatus("点开始推理");
   setMethodUi("chroma");
+  setTool("sample");
   applyPreviewBg("checker");
   renderSwatches();
-  paint(original);
+  refreshPreview();
   document.getElementById("editor-root")!.hidden = false;
   clearEditorLocal();
   rememberEditorBaseline();
@@ -687,11 +784,19 @@ async function openEditor(): Promise<void> {
 
 function closeEditor(): void {
   original = null;
+  plate = null;
+  matted = null;
   preview = null;
+  resetRefine();
   samples = [];
   matteAlpha = null;
   matteFile = null;
   matteGen += 1;
+  painting = false;
+  lastDab = null;
+  loupePoint = null;
+  hideLoupe();
+  hideBrushRing();
   hideBirefProgress();
   clearEditorLocal();
   document.getElementById("editor-root")!.hidden = true;
@@ -710,6 +815,7 @@ function replaceOps(frame: { ops: FrameOp[] }, op: FrameOp): void {
 
 function editorHasPending(): boolean {
   if (!original) return false;
+  if (hasRefine()) return true;
   if (method === "birefNet") return matteAlpha != null;
   return currentChromaOp() != null;
 }
@@ -723,16 +829,14 @@ function syncEditorNav(): void {
   if (next) next.disabled = pos < 0 || pos >= frames.length - 1;
 }
 
-function editorOutput(): { op: FrameOp; output: ImageData } | null {
-  if (!original) return null;
-  if (method === "birefNet") {
-    if (!matteAlpha) return null;
-    const op = currentBirefOp();
-    return { op, output: applyBirefNet(original, matteAlpha, op) };
-  }
-  const op = currentChromaOp();
-  if (!op) return null;
-  return { op, output: applyChromaKey(original, op) };
+function editorOutput(): { op: FrameOp | null; output: ImageData } | null {
+  if (!original || !plate || !matted) return null;
+  bakeActiveStroke();
+  const keyed = method === "birefNet" ? matteAlpha != null : currentChromaOp() != null;
+  if (!keyed && !hasRefine()) return null;
+  const output = compositeRefine(matted, plate, refine, null);
+  if (method === "birefNet") return { op: keyed ? currentBirefOp() : null, output };
+  return { op: keyed ? currentChromaOp() : null, output };
 }
 
 async function commitEditorFrame(): Promise<boolean> {
@@ -747,13 +851,15 @@ async function commitEditorFrame(): Promise<boolean> {
   try {
     const blob = await imageDataToPng(built.output);
     await putFrame(project.id, fileName(frame.file), blob);
-    replaceOps(frame, built.op);
+    if (built.op) replaceOps(frame, built.op);
     state.dirty = true;
     history.clear();
     clearEditorLocal();
+    const kind = built.op ? (built.op.type === "birefNet" ? "BiRefNet" : "色度") : "精修";
+    const extra = built.op && refineMarks > 0 ? "和精修" : "";
     setState({
       bust: Date.now(),
-      status: `第 ${frame.index + 1} 帧已应用${method === "birefNet" ? " BiRefNet" : "色度"}`,
+      status: `第 ${frame.index + 1} 帧已应用${kind}${extra}`,
     });
     await persistNow();
     showAppliedFramePreview(frame.id);
@@ -768,27 +874,32 @@ async function applyEditor(): Promise<void> {
   const project = state.project;
   const frame = currentFrame();
   if (!project || !frame || !original) {
-    setState({ status: "请先点击画面采样颜色" });
+    setState({ status: "请先选择一帧" });
     return;
   }
   if (matteBusy) {
     setState({ status: "正在推理，请稍候" });
     return;
   }
-  if (method === "birefNet" && !matteAlpha) {
+  const painted = hasRefine();
+  const keyed = method === "birefNet" ? matteAlpha != null : currentChromaOp() != null;
+  if (method === "birefNet" && !matteAlpha && !painted) {
     setState({ status: "请先完成 BiRefNet 推理" });
     return;
   }
-  if (method !== "birefNet" && !currentChromaOp()) {
-    setState({ status: "请先点击画面采样颜色" });
+  if (method !== "birefNet" && !keyed && !painted) {
+    setState({ status: "请先点击画面采样颜色，或用画笔 / 橡皮精修" });
     return;
   }
   const ok = await confirmDialog({
-    title: "应用抠图",
-    body:
-      method === "birefNet"
-        ? "将写入该帧像素，无法撤销。按 AI 主体遮罩写入。"
-        : "将写入该帧像素，无法撤销。",
+    title: painted && !keyed ? "应用精修" : "应用抠图",
+    body: painted && !keyed
+      ? "将把这一帧的画笔 / 橡皮精修写入像素，无法撤销。精修不会批量到其它帧。"
+      : painted
+        ? "将写入该帧像素，无法撤销。精修只留在这一帧。"
+        : method === "birefNet"
+          ? "将写入该帧像素，无法撤销。按 AI 主体遮罩写入。"
+          : "将写入该帧像素，无法撤销。",
     ok: "应用",
     danger: true,
   });
@@ -986,6 +1097,221 @@ async function restoreSelectedFrames(): Promise<void> {
   if (!document.getElementById("editor-root")!.hidden) closeEditor();
 }
 
+function bakeActiveStroke(): void {
+  if (!stroke || !original) return;
+  if (!refine) refine = createRefine(original.width, original.height);
+  const wrote = bakeStroke(refine, stroke);
+  stroke = null;
+  lastDab = null;
+  painting = false;
+  if (wrote) {
+    refineMarks = 1;
+    refineRev += 1;
+  }
+}
+
+function setTool(next: EditorTool): void {
+  tool = next;
+  canvas().classList.toggle("is-sample", next === "sample");
+  canvas().classList.toggle("is-paint", next !== "sample");
+  const panel = document.getElementById("refine-panel");
+  if (panel) panel.hidden = next === "sample";
+  for (const btn of document.querySelectorAll<HTMLElement>("#editor-tool [data-tool]")) {
+    btn.classList.toggle("is-on", btn.dataset.tool === next);
+  }
+  if (next === "sample") hideBrushRing();
+}
+
+function setLoupeScale(next: LoupeScale): void {
+  loupeScale = next;
+  const label = document.getElementById("editor-loupe-label");
+  if (label) label.textContent = `${next}×`;
+  for (const btn of document.querySelectorAll<HTMLElement>("#editor-loupe-rates [data-loupe]")) {
+    btn.classList.toggle("is-on", Number(btn.dataset.loupe) === next);
+  }
+  if (loupePoint) drawLoupe(loupePoint);
+}
+
+function hideLoupe(): void {
+  const node = document.getElementById("editor-loupe");
+  if (node) node.hidden = true;
+}
+
+function hideBrushRing(): void {
+  const ring = document.getElementById("editor-brush-ring");
+  if (ring) ring.hidden = true;
+}
+
+function imagePoint(ev: { clientX: number; clientY: number }): { x: number; y: number } | null {
+  if (!original) return null;
+  const c = canvas();
+  const rect = c.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = ((ev.clientX - rect.left) / rect.width) * original.width;
+  const y = ((ev.clientY - rect.top) / rect.height) * original.height;
+  if (x < 0 || y < 0 || x >= original.width || y >= original.height) return null;
+  return { x, y };
+}
+
+function loupeBg(ix: number, iy: number): [number, number, number] {
+  if (previewBg === "white") return [255, 255, 255];
+  if (previewBg === "black") return [0, 0, 0];
+  if (previewBg === "gray") return [158, 158, 158];
+  const odd = ((Math.floor(ix / 8) + Math.floor(iy / 8)) & 1) === 1;
+  return odd ? [187, 182, 170] : [215, 210, 198];
+}
+
+function drawLoupe(pt: { x: number; y: number }): void {
+  if (!preview) return;
+  const view = document.getElementById("editor-loupe-view") as HTMLCanvasElement | null;
+  if (!view) return;
+  const css = 148;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const bufW = Math.round(css * dpr);
+  const bufH = bufW;
+  if (view.width !== bufW) view.width = bufW;
+  if (view.height !== bufH) view.height = bufH;
+  const ctx = view.getContext("2d");
+  if (!ctx) return;
+  const pxPerImage = loupeScale * dpr;
+  const src = css / loupeScale;
+  const sx = pt.x - src / 2;
+  const sy = pt.y - src / 2;
+  const img = ctx.createImageData(bufW, bufH);
+  const out = img.data;
+  const srcData = preview.data;
+  const sw = preview.width;
+  const sh = preview.height;
+  for (let dy = 0; dy < bufH; dy++) {
+    const iy = Math.floor(sy + dy / pxPerImage);
+    for (let dx = 0; dx < bufW; dx++) {
+      const ix = Math.floor(sx + dx / pxPerImage);
+      const o = (dy * bufW + dx) * 4;
+      const bg = loupeBg(ix, iy);
+      if (ix < 0 || iy < 0 || ix >= sw || iy >= sh) {
+        out[o] = bg[0];
+        out[o + 1] = bg[1];
+        out[o + 2] = bg[2];
+        out[o + 3] = 255;
+        continue;
+      }
+      const i = (iy * sw + ix) * 4;
+      const a = srcData[i + 3] / 255;
+      out[o] = Math.round(srcData[i] * a + bg[0] * (1 - a));
+      out[o + 1] = Math.round(srcData[i + 1] * a + bg[1] * (1 - a));
+      out[o + 2] = Math.round(srcData[i + 2] * a + bg[2] * (1 - a));
+      out[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const px = Math.max(0, Math.min(sw - 1, Math.floor(pt.x)));
+  const py = Math.max(0, Math.min(sh - 1, Math.floor(pt.y)));
+  const pi = (py * sw + px) * 4;
+  const set = (id: string, n: number) => {
+    const node = document.getElementById(id);
+    if (node) node.textContent = String(n);
+  };
+  set("loupe-r", srcData[pi]);
+  set("loupe-g", srcData[pi + 1]);
+  set("loupe-b", srcData[pi + 2]);
+  set("loupe-a", srcData[pi + 3]);
+}
+
+function placeLoupe(ev: { clientX: number; clientY: number }): void {
+  const stage = document.querySelector(".editor-stage") as HTMLElement | null;
+  const node = document.getElementById("editor-loupe");
+  if (!stage || !node) return;
+  const sr = stage.getBoundingClientRect();
+  const gap = 16;
+  const width = node.offsetWidth || 168;
+  const height = node.offsetHeight || 210;
+  let left = ev.clientX - sr.left - width / 2;
+  let top = ev.clientY - sr.top - height - gap;
+  if (top < 8) top = ev.clientY - sr.top + gap;
+  left = Math.max(8, Math.min(left, stage.clientWidth - width - 8));
+  node.style.left = `${left}px`;
+  node.style.top = `${top}px`;
+}
+
+function updateLoupe(ev: PointerEvent): void {
+  const pt = imagePoint(ev);
+  const node = document.getElementById("editor-loupe");
+  if (!node) return;
+  if (!pt || !preview) {
+    hideLoupe();
+    return;
+  }
+  if (node.hidden) node.hidden = false;
+  loupePoint = pt;
+  placeLoupe(ev);
+  drawLoupe(pt);
+}
+
+function updateBrushRing(ev: PointerEvent): void {
+  const ring = document.getElementById("editor-brush-ring");
+  if (!ring) return;
+  const pt = imagePoint(ev);
+  if (tool === "sample" || !pt || !original) {
+    ring.hidden = true;
+    return;
+  }
+  const rect = canvas().getBoundingClientRect();
+  const screen = brushDiameter() * (rect.width / original.width);
+  ring.hidden = false;
+  ring.style.width = `${Math.max(screen, 2)}px`;
+  ring.style.height = `${Math.max(screen, 2)}px`;
+  ring.style.left = `${ev.clientX}px`;
+  ring.style.top = `${ev.clientY}px`;
+}
+
+function dabStroke(x: number, y: number): void {
+  if (!stroke || !original) return;
+  const mode = tool === "eraser" ? "erase" : "restore";
+  const diameter = brushDiameter();
+  let bounds: PixelRect | null = null;
+  const stampAt = (sx: number, sy: number) => {
+    bounds = unionRect(bounds, stampRefine(stroke!, original!.width, original!.height, sx, sy, diameter, brushHardness(), mode));
+  };
+  if (lastDab) {
+    const dist = Math.hypot(x - lastDab.x, y - lastDab.y);
+    const step = Math.max(1, diameter * 0.35);
+    const n = Math.max(1, Math.ceil(dist / step));
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      stampAt(lastDab.x + (x - lastDab.x) * t, lastDab.y + (y - lastDab.y) * t);
+    }
+  } else {
+    stampAt(x, y);
+  }
+  lastDab = { x, y };
+  if (bounds) present(bounds);
+}
+
+function beginStroke(ev: PointerEvent): void {
+  if (!original || (tool !== "brush" && tool !== "eraser")) return;
+  const pt = imagePoint(ev);
+  if (!pt) return;
+  flushEditorSliderHistory();
+  pushEditorLocal(captureEditor());
+  stroke = createRefine(original.width, original.height);
+  painting = true;
+  lastDab = null;
+  canvas().setPointerCapture(ev.pointerId);
+  dabStroke(pt.x, pt.y);
+}
+
+function endStroke(): void {
+  if (!painting && !stroke) return;
+  painting = false;
+  const had = stroke != null;
+  bakeActiveStroke();
+  if (had) {
+    rememberEditorBaseline();
+    present();
+  }
+  lastDab = null;
+}
+
 export function initEditor(): void {
   document.getElementById("btn-open-editor")!.addEventListener("click", () => {
     setState({ editorOpen: true });
@@ -1021,6 +1347,13 @@ export function initEditor(): void {
     (ev) => {
       if (!original || document.getElementById("editor-root")!.hidden) return;
       ev.preventDefault();
+      if (ev.altKey) {
+        const order: LoupeScale[] = [2, 4, 8];
+        const index = order.indexOf(loupeScale);
+        const next = ev.deltaY < 0 ? order[Math.min(order.length - 1, index + 1)] : order[Math.max(0, index - 1)];
+        setLoupeScale(next);
+        return;
+      }
       const wrap = canvasWrap();
       const rect = wrap.getBoundingClientRect();
       const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
@@ -1037,7 +1370,7 @@ export function initEditor(): void {
   }).observe(canvasWrap());
 
   canvas().addEventListener("click", (ev) => {
-    if (!original || method !== "chroma") return;
+    if (!original || method !== "chroma" || tool !== "sample") return;
     flushEditorSliderHistory();
     const before = captureEditor();
     const c = canvas();
@@ -1061,6 +1394,51 @@ export function initEditor(): void {
     renderSwatches();
     refreshPreview();
   });
+
+  canvas().addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || tool === "sample") return;
+    ev.preventDefault();
+    beginStroke(ev);
+  });
+  canvas().addEventListener("pointermove", (ev) => {
+    if (!painting) return;
+    const pt = imagePoint(ev);
+    if (pt) dabStroke(pt.x, pt.y);
+  });
+  canvas().addEventListener("pointerup", () => endStroke());
+  canvas().addEventListener("pointercancel", () => endStroke());
+
+  const stage = document.querySelector(".editor-stage");
+  stage?.addEventListener("pointermove", (ev) => {
+    if (document.getElementById("editor-root")!.hidden) return;
+    updateLoupe(ev as PointerEvent);
+    updateBrushRing(ev as PointerEvent);
+  });
+  stage?.addEventListener("pointerleave", () => {
+    loupePoint = null;
+    hideLoupe();
+    hideBrushRing();
+  });
+  document.getElementById("editor-tool")!.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest<HTMLElement>("[data-tool]");
+    if (!btn?.dataset.tool) return;
+    setTool(btn.dataset.tool as EditorTool);
+  });
+  document.getElementById("editor-loupe-rates")!.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const btn = (ev.target as HTMLElement).closest<HTMLElement>("[data-loupe]");
+    const scale = Number(btn?.dataset.loupe);
+    if (scale === 2 || scale === 4 || scale === 8) setLoupeScale(scale);
+  });
+  for (const id of ["brush-size", "brush-hardness"]) {
+    document.getElementById(id)!.addEventListener("input", () => {
+      const ring = document.getElementById("editor-brush-ring");
+      if (!ring || ring.hidden) return;
+      const size = brushDiameter() * (canvas().getBoundingClientRect().width / (original?.width || 1));
+      ring.style.width = `${Math.max(size, 2)}px`;
+      ring.style.height = `${Math.max(size, 2)}px`;
+    });
+  }
 
   document.getElementById("matte-method")!.addEventListener("click", (ev) => {
     const btn = (ev.target as HTMLElement).closest<HTMLElement>("[data-method]");
@@ -1111,11 +1489,19 @@ export function syncEditorVisibility(): void {
     if (root.hidden) void openEditor();
   } else if (!root.hidden) {
     original = null;
+    plate = null;
+    matted = null;
     preview = null;
+    resetRefine();
     samples = [];
     matteAlpha = null;
     matteFile = null;
     matteGen += 1;
+    painting = false;
+    lastDab = null;
+    loupePoint = null;
+    hideLoupe();
+    hideBrushRing();
     clearEditorLocal();
     root.hidden = true;
   }

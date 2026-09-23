@@ -312,8 +312,28 @@
         <div class="editor-body">
           <div class="editor-stage">
             <div class="checker editor-canvas-wrap">
-              <canvas id="editor-canvas"></canvas>
+              <canvas id="editor-canvas" class="is-sample"></canvas>
             </div>
+            <div id="editor-loupe-rates" class="editor-loupe-dock">
+              <span>放大镜</span>
+              <button type="button" data-loupe="2">2×</button>
+              <button type="button" data-loupe="4" class="is-on">4×</button>
+              <button type="button" data-loupe="8">8×</button>
+            </div>
+            <div id="editor-loupe" class="editor-loupe" hidden>
+              <div class="editor-loupe-glass">
+                <canvas id="editor-loupe-view" width="148" height="148"></canvas>
+                <div class="editor-loupe-cross"></div>
+                <span id="editor-loupe-label" class="editor-loupe-label">4×</span>
+              </div>
+              <p class="editor-loupe-readout">
+                <span class="is-r">R</span> <b id="loupe-r">—</b>
+                <span class="is-g">G</span> <b id="loupe-g">—</b>
+                <span class="is-b">B</span> <b id="loupe-b">—</b>
+                <span class="is-a">A</span> <b id="loupe-a">—</b>
+              </p>
+            </div>
+            <div id="editor-brush-ring" class="editor-brush-ring" hidden></div>
             <button type="button" class="editor-side-nav is-prev" id="btn-editor-prev" title="上一帧（←）" aria-label="上一帧">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 3.5 6 12l10.5 8.5z"/></svg>
             </button>
@@ -322,6 +342,30 @@
             </button>
           </div>
           <aside class="editor-tools">
+            <div class="field">工具
+              <div class="seg" id="editor-tool">
+                <button type="button" class="seg-btn is-on" data-tool="sample">取样</button>
+                <button type="button" class="seg-btn" data-tool="brush">画笔</button>
+                <button type="button" class="seg-btn" data-tool="eraser">橡皮</button>
+              </div>
+            </div>
+            <div id="refine-panel" hidden>
+              <label class="field">
+                <span class="slider-head">
+                  <span>笔刷尺寸</span>
+                  <input id="brush-size-val" class="num-box" type="number" min="1" max="128" step="1" value="10" aria-label="笔刷尺寸" />
+                </span>
+                <input id="brush-size" type="range" min="1" max="128" step="1" value="10" />
+              </label>
+              <label class="field">
+                <span class="slider-head">
+                  <span>硬度</span>
+                  <input id="brush-hardness-val" class="num-box" type="number" min="0" max="100" step="1" value="100" aria-label="硬度" />
+                </span>
+                <input id="brush-hardness" type="range" min="0" max="100" step="1" value="100" />
+              </label>
+              <p class="hint">画笔从抽出原图把抠穿的像素补回来。橡皮把碰到的地方变成透明。精修只写入这一帧，不会批量到其它帧。</p>
+            </div>
             <div class="field">方法
               <div class="seg" id="matte-method">
                 <button type="button" class="seg-btn is-on" data-method="chroma">色度</button>
@@ -337,7 +381,7 @@
               </div>
             </div>
             <div id="chroma-panel">
-              <p class="hint">可点多处残绿。滚轮或 +/- 缩放。调参只影响预览；点应用才写入。再次打开从已应用的画面继续，不会还原抽出绿幕。</p>
+              <p class="hint">取样工具下可点多处残绿。滚轮缩放画面，按住 Alt 再滚轮切换放大镜 2× / 4× / 8×。调参只影响预览；点应用才写入。再次打开从已应用的画面继续，不会还原抽出绿幕。</p>
               <div id="chroma-swatches" class="chroma-swatches"></div>
               <p id="sample-rgb" class="hint">未采样</p>
               <button type="button" class="btn" id="btn-chroma-clear" hidden>清空色样</button>

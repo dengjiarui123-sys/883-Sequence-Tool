@@ -66,4 +66,6 @@ export function initSliderFields(): void {
   bindSliderNumber("despill", "despill-val");
   bindSliderNumber("biref-threshold", "biref-th-val", (n) => n.toFixed(2));
   bindSliderNumber("biref-feather", "biref-feather-val");
+  bindSliderNumber("brush-size", "brush-size-val");
+  bindSliderNumber("brush-hardness", "brush-hardness-val");
 }
