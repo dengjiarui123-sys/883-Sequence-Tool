@@ -223,6 +223,128 @@ export async function pickOpenPath(): Promise<{ canceled: boolean; path?: string
   return parseJson(await fetch("/api/dialogs/open", { method: "POST" }));
 }
 
+export async function fetchFfmpegStatus(): Promise<{ available: boolean }> {
+  return parseJson(await fetch("/api/ffmpeg"));
+}
+
+export async function installFfmpeg(
+  onProgress: (ev: { line: string; percent?: number; phase?: string }) => void,
+): Promise<{ available: boolean }> {
+  const res = await fetch("/api/ffmpeg/install", { method: "POST" });
+  if (!res.ok || !res.body) {
+    let message = `下载失败 (${res.status})`;
+    try {
+      const body = JSON.parse(await res.text()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      /* 保持默认文案 */
+    }
+    throw new Error(message);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let available = false;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buf += decoder.decode(chunk.value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as { phase?: string; line?: string; percent?: number; error?: string; available?: boolean };
+      if (msg.error || msg.phase === "error") throw new Error(msg.error || msg.line || "下载失败");
+      if (msg.line) onProgress({ line: msg.line, percent: msg.percent, phase: msg.phase });
+      if (msg.phase === "done") available = msg.available !== false;
+    }
+  }
+  if (!available) throw new Error("下载结束但 ffmpeg 仍不可用");
+  return { available: true };
+}
+
+export interface VideoProbe {
+  token: string;
+  fps: number;
+  width: number;
+  height: number;
+  duration: number;
+}
+
+export async function probeVideoFile(file: File): Promise<VideoProbe> {
+  return parseJson(
+    await fetch("/api/ffmpeg/probe", {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": "application/octet-stream" },
+    }),
+  );
+}
+
+export interface EncodedFrameFile {
+  file: string;
+  w: number;
+  h: number;
+}
+
+export async function runEncodedExtract(
+  projectId: string,
+  token: string,
+  range: { start: number; end: number; x: number; y: number; w: number; h: number },
+  onProgress: (current: number) => void,
+  signal: AbortSignal,
+): Promise<{ sourceFps: number; frames: EncodedFrameFile[] }> {
+  const params = new URLSearchParams({
+    token,
+    start: String(range.start),
+    end: String(range.end),
+    x: String(range.x),
+    y: String(range.y),
+    w: String(range.w),
+    h: String(range.h),
+  });
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/extract-frames?${params}`, {
+    method: "POST",
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let message = `提取失败 (${res.status})`;
+    try {
+      const body = JSON.parse(await res.text()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      /* 保持默认文案 */
+    }
+    throw new Error(message);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let doneMsg: { sourceFps: number; frames: EncodedFrameFile[] } | null = null;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buf += decoder.decode(chunk.value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line) as {
+        type: string;
+        current?: number;
+        error?: string;
+        sourceFps?: number;
+        frames?: EncodedFrameFile[];
+      };
+      if (msg.type === "progress") onProgress(msg.current || 0);
+      if (msg.type === "error") throw new Error(msg.error || "提取失败");
+      if (msg.type === "done" && msg.frames) doneMsg = { sourceFps: msg.sourceFps || 0, frames: msg.frames };
+    }
+  }
+  if (!doneMsg) throw new Error("提取没有返回帧");
+  return doneMsg;
+}
+
 export async function writeProjectPack(filePath: string, data: Uint8Array): Promise<void> {
   const res = await fetch(`/api/project-pack?path=${encodeURIComponent(filePath)}`, {
     method: "PUT",

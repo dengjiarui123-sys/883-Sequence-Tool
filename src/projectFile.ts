@@ -75,24 +75,6 @@ async function packCurrentProject(): Promise<Uint8Array> {
   return zipSync(files, { level: 6 });
 }
 
-function logPicker(hypothesisId: string, message: string, data: Record<string, unknown>): void {
-  // #region agent log
-  fetch("http://127.0.0.1:7271/ingest/c2c91e4c-5391-4090-8dac-685983b9b108", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "360abd" },
-    body: JSON.stringify({
-      sessionId: "360abd",
-      runId: "post-fix",
-      hypothesisId,
-      location: "projectFile.ts",
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-}
-
 function finishSave(status: string): void {
   const project = state.project;
   if (!project) throw new Error("没有可保存的工程");
@@ -118,16 +100,8 @@ export async function saveProjectFile(): Promise<void> {
   const project = state.project;
   if (!project) throw new Error("没有可保存的工程");
   const suggestedName = suggestedPackName(project.label || project.id);
-  logPicker("F", "save start", { suggestedName, method: "node-dialog" });
 
   const picked = await pickSavePath(suggestedName);
-  logPicker("F", "save dialog result", {
-    method: "node-dialog",
-    suggestedName,
-    canceled: picked.canceled,
-    path: picked.path || "",
-    dir: picked.dir || "",
-  });
   if (picked.canceled || !picked.path) {
     setState({ status: "已取消保存" });
     return;
@@ -136,20 +110,12 @@ export async function saveProjectFile(): Promise<void> {
   await persistNow();
   const zipped = await packCurrentProject();
   await writeProjectPack(picked.path, zipped);
-  logPicker("F", "save write done", { path: picked.path, bytes: zipped.byteLength });
   finishSave(`已保存到 ${picked.path}`);
 }
 
 export async function openProjectFromDisk(): Promise<boolean> {
-  logPicker("G", "open start", { method: "node-dialog" });
   try {
     const picked = await pickOpenPath();
-    logPicker("G", "open dialog result", {
-      method: "node-dialog",
-      canceled: picked.canceled,
-      path: picked.path || "",
-      dir: picked.dir || "",
-    });
     if (picked.canceled || !picked.path) {
       setState({ status: "已取消打开" });
       return false;
@@ -158,17 +124,15 @@ export async function openProjectFromDisk(): Promise<boolean> {
     await applyProjectPack(bytes);
     setState({ status: `已打开 ${picked.path}` });
     return true;
-  } catch (err) {
-    logPicker("G", "node-dialog open failed", { error: (err as Error).message || String(err) });
+  } catch {
+    /* 对话框失败时改用文件选择 */
   }
 
   const file = await pickOpenFileInput();
   if (!file) {
-    logPicker("G", "open dialog result", { method: "file-input", canceled: true });
     setState({ status: "已取消打开" });
     return false;
   }
-  logPicker("G", "open dialog result", { method: "file-input", canceled: false, name: file.name });
   await applyProjectPack(new Uint8Array(await file.arrayBuffer()));
   setState({ status: `已打开 ${file.name}` });
   return true;

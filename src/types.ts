@@ -71,6 +71,8 @@ export interface Project {
     startSec: number;
     endSec: number;
     fps: number;
+    mode?: "time" | "frames";
+    sourceFps?: number;
   };
   frames: FrameRecord[];
   editConfirmed?: boolean;

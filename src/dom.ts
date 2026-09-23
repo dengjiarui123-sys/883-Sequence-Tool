@@ -4,6 +4,26 @@ export function $(id: string): HTMLElement {
   return el;
 }
 
+export function noticeDialog(message: string): Promise<void> {
+  const overlay = document.getElementById("modal-root")!;
+  return new Promise((resolve) => {
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <h3>${escapeHtml(message)}</h3>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-primary" data-act="ok">确定</button>
+        </div>
+      </div>`;
+    overlay.hidden = false;
+    const close = () => {
+      overlay.hidden = true;
+      overlay.innerHTML = "";
+      resolve();
+    };
+    overlay.querySelector("[data-act=ok]")!.addEventListener("click", () => close());
+  });
+}
+
 export async function confirmDialog(opts: {
   title: string;
   body: string;

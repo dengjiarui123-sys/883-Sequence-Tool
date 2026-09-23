@@ -56,7 +56,7 @@
             </label>
           </div>
           <div class="timeline-row">
-            <button type="button" class="btn" id="btn-play">播放预览</button>
+            <button type="button" class="btn" id="btn-play">播放动画</button>
             <input id="video-scrub" type="range" min="0" max="1" step="0.01" value="0" />
             <span id="video-time">0.00 / 0.00</span>
           </div>
@@ -82,12 +82,18 @@
           <label class="field">结束秒
             <input id="end-sec" type="number" min="0" step="0.01" value="0" />
           </label>
-          <label class="field"><span>每秒抽取 <span id="fps-val">20</span> 帧</span>
+          <label class="field">抽样方式
+            <select id="extract-mode">
+              <option value="time">按时间抽样</option>
+              <option value="frames">全部编码帧</option>
+            </select>
+          </label>
+          <label class="field" id="fps-field"><span>每秒抽取 <span id="fps-val">20</span> 帧</span>
             <span class="field-note">每秒从视频中提取多少个画面</span>
             <input id="fps" type="range" min="1" max="30" step="1" value="20" />
           </label>
           <p class="estimate" id="estimate">预估 <b>0</b> 帧　（区间 0 秒 × 每秒 20 帧）</p>
-          <p class="hint">按时间抽样，不是解码器逐编码帧。</p>
+          <p class="hint" id="extract-mode-hint">按时间抽样，不是解码器逐编码帧。</p>
           <div class="progress" id="extract-progress" hidden>
             <div class="progress-bar"><i id="extract-bar"></i></div>
             <p id="extract-label">0 / 0</p>
@@ -145,9 +151,10 @@
               <div class="splitter splitter-row" id="split-organize-preview" role="separator" aria-orientation="horizontal" aria-label="调整预览高度" title="拖拽调整高度，双击恢复默认"></div>
               <div class="preview-box">
                 <canvas id="organize-preview" width="280" height="280"></canvas>
-                <div class="preview-bar">
-                  <button type="button" class="btn" id="btn-preview-play">播放预览</button>
-                  <span id="preview-info">只播放当前选中集合</span>
+                <div class="preview-bar timeline-row">
+                  <button type="button" class="btn" id="btn-preview-play">播放动画</button>
+                  <input id="preview-scrub" type="range" min="0" max="0" step="1" value="0" aria-label="播放进度" />
+                  <span id="preview-info">0 / 0</span>
                 </div>
                 <div class="speed-row speed-row-dark">
                   <span class="speed-label">播放速度</span>
@@ -348,6 +355,17 @@
           <button type="button" class="btn" id="decimate-cancel">取消</button>
           <button type="button" class="btn btn-primary" id="decimate-ok">确认减帧</button>
         </div>
+      </div>
+    </div>
+
+    <div id="ffmpeg-progress-root" class="overlay" hidden>
+      <div class="modal batch-progress-modal">
+        <h3>正在下载 ffmpeg</h3>
+        <p id="ffmpeg-progress-label">0%</p>
+        <div class="progress">
+          <div class="progress-bar"><i id="ffmpeg-progress-bar"></i></div>
+        </div>
+        <p class="hint" id="ffmpeg-progress-hint">约 190MB，下载到本工具目录。请稍候…</p>
       </div>
     </div>
 

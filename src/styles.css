@@ -197,7 +197,11 @@ body {
   color: #c5c8c0;
 }
 .speed-row-dark .speed-label { color: #eee; }
-.preview-bar { display: flex; gap: 8px; align-items: center; padding: 8px 8px 4px; background: #1c1e1a; color: #ddd; font-size: 12px; }
+.preview-bar.timeline-row {
+  padding: 8px;
+  background: #1c1e1a;
+}
+.preview-bar #preview-info { color: #ddd; font: 12px var(--mono); }
 
 .meta { display: grid; gap: 6px; margin: 0 0 12px; }
 .meta div { display: grid; grid-template-columns: 64px 1fr; gap: 8px; font-size: 13px; }

@@ -170,36 +170,8 @@ function initShell(): void {
     void quickSave();
   });
   document.getElementById("btn-save")!.addEventListener("click", () => {
-    // #region agent log
-    fetch("http://127.0.0.1:7271/ingest/c2c91e4c-5391-4090-8dac-685983b9b108", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "360abd" },
-      body: JSON.stringify({
-        sessionId: "360abd",
-        hypothesisId: "A",
-        location: "main.ts:btn-save",
-        message: "save button clicked",
-        data: { dirty: state.dirty, status: state.status, lastSavedAt: state.lastSavedAt },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     setState({ status: "请选择保存位置和文件名…" });
     saveProjectFile().catch((err) => {
-      // #region agent log
-      fetch("http://127.0.0.1:7271/ingest/c2c91e4c-5391-4090-8dac-685983b9b108", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "360abd" },
-        body: JSON.stringify({
-          sessionId: "360abd",
-          hypothesisId: "D",
-          location: "main.ts:btn-save:catch",
-          message: "saveProjectFile rejected",
-          data: { error: (err as Error).message },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setState({ status: `保存失败：${(err as Error).message}` });
     });
   });
@@ -226,21 +198,6 @@ function initShell(): void {
       syncExportFields();
     };
     proceed().catch((err) => {
-      // #region agent log
-      fetch("http://127.0.0.1:7271/ingest/c2c91e4c-5391-4090-8dac-685983b9b108", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "360abd" },
-        body: JSON.stringify({
-          sessionId: "360abd",
-          runId: "post-fix",
-          hypothesisId: "G",
-          location: "main.ts:btn-open:catch",
-          message: "openProjectFromDisk rejected",
-          data: { error: (err as Error).message },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setState({ status: `打开失败：${(err as Error).message}` });
     });
   });
@@ -261,20 +218,6 @@ function initShell(): void {
   };
   nameEl.addEventListener("input", () => {
     const label = nameEl.value;
-    // #region agent log
-    fetch("http://127.0.0.1:7271/ingest/c2c91e4c-5391-4090-8dac-685983b9b108", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "360abd" },
-      body: JSON.stringify({
-        sessionId: "360abd",
-        hypothesisId: "H",
-        location: "main.ts:project-label",
-        message: "project label edited",
-        data: { label },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (labelSnap === null) labelSnap = state.project?.label ?? "";
     patchProject((project) => {
       project.label = label;

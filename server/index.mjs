@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
 import { showOpenDialog, showSaveDialog } from "./fileDialog.mjs";
+import { extractEncodedFrames, ffmpegStatus, installLocalFfmpeg, pixelCrop, storeVideo, videoByToken } from "./ffmpegExtract.mjs";
 import { handleMatteApi } from "./matte.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -103,6 +104,7 @@ function defaultProject(id, label) {
       startSec: 0,
       endSec: 0,
       fps: 20,
+      mode: "time",
     },
     frames: [],
     editConfirmed: false,
@@ -189,27 +191,6 @@ function assertPackPath(filePath) {
   return abs;
 }
 
-async function agentLog(hypothesisId, message, data) {
-  // #region agent log
-  try {
-    await fs.appendFile(
-      path.join(ROOT, ".cursor", "debug-360abd.log"),
-      `${JSON.stringify({
-        sessionId: "360abd",
-        runId: "post-fix",
-        hypothesisId,
-        location: "server/index.mjs",
-        message,
-        data,
-        timestamp: Date.now(),
-      })}\n`,
-    );
-  } catch {
-    /* ignore */
-  }
-  // #endregion
-}
-
 async function handleApi(req, res) {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const parts = url.pathname.split("/").filter(Boolean);
@@ -221,6 +202,108 @@ async function handleApi(req, res) {
   try {
     if (req.method === "GET" && parts.length === 2 && parts[1] === "health") {
       json(res, 200, { ok: true, dialogs: true });
+      return true;
+    }
+
+    if (req.method === "GET" && parts.length === 2 && parts[1] === "ffmpeg") {
+      const status = ffmpegStatus();
+      json(res, 200, { available: status.available, source: status.source });
+      return true;
+    }
+
+    if (req.method === "POST" && parts.length === 3 && parts[1] === "ffmpeg" && parts[2] === "install") {
+      res.writeHead(200, {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      const send = (payload) => {
+        if (!res.writableEnded) res.write(`${JSON.stringify(payload)}\n`);
+      };
+      try {
+        const status = await installLocalFfmpeg((ev) => send(ev));
+        send({ phase: "done", line: "ffmpeg 已就绪", percent: 100, available: status.available });
+      } catch (err) {
+        send({ phase: "error", line: err?.message || "下载失败", error: err?.message || "下载失败" });
+      }
+      res.end();
+      return true;
+    }
+
+    if (req.method === "POST" && parts.length === 3 && parts[1] === "ffmpeg" && parts[2] === "probe") {
+      const stored = await storeVideo(req);
+      json(res, 200, stored);
+      return true;
+    }
+
+    if (
+      req.method === "POST" &&
+      parts[1] === "projects" &&
+      parts[3] === "extract-frames" &&
+      parts.length === 4
+    ) {
+      const id = assertId(parts[2]);
+      const token = url.searchParams.get("token") || "";
+      const stored = videoByToken(token);
+      if (!stored) {
+        sendError(res, 404, "视频缓存已失效，请重新提取");
+        return true;
+      }
+      const startSec = Number(url.searchParams.get("start"));
+      const endSec = Number(url.searchParams.get("end"));
+      if (!(endSec > startSec)) {
+        sendError(res, 400, "结束时间必须大于起始时间");
+        return true;
+      }
+      const norm = {
+        x: Number(url.searchParams.get("x")) || 0,
+        y: Number(url.searchParams.get("y")) || 0,
+        w: Number(url.searchParams.get("w")) || 1,
+        h: Number(url.searchParams.get("h")) || 1,
+      };
+      let aborted = false;
+      let killExtract = () => {};
+      res.on("close", () => {
+        if (!res.writableEnded) {
+          aborted = true;
+          killExtract();
+        }
+      });
+      res.writeHead(200, {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      const writeLine = (payload) => {
+        if (!res.writableEnded) res.write(`${JSON.stringify(payload)}\n`);
+      };
+      try {
+        const frames = await extractEncodedFrames({
+          inputPath: stored.path,
+          framesDir: path.join(WORKSPACE_DIR, id, "frames"),
+          originalDir: path.join(WORKSPACE_DIR, id, "frames-original"),
+          startSec,
+          endSec,
+          crop: pixelCrop(stored.probe, norm),
+          onProgress: (current) => writeLine({ type: "progress", current }),
+          onChild: (child) => {
+            killExtract = () => {
+              if (!child.killed) child.kill();
+            };
+          },
+          isAborted: () => aborted,
+        });
+        if (aborted) {
+          writeLine({ type: "error", error: "已取消提取" });
+        } else {
+          writeLine({
+            type: "done",
+            sourceFps: stored.probe.fps,
+            frames,
+          });
+        }
+      } catch (err) {
+        writeLine({ type: "error", error: err.message || "提取失败" });
+      }
+      res.end();
       return true;
     }
 
@@ -246,7 +329,6 @@ async function handleApi(req, res) {
         return true;
       }
       const abs = assertPackPath(picked);
-      await agentLog("K", "save dialog path", { raw: picked, abs });
       json(res, 200, { canceled: false, ...(await saveLastPack(abs)) });
       return true;
     }

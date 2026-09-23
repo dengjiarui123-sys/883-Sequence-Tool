@@ -1,5 +1,5 @@
 import { deleteFrame, frameUrl } from "./api";
-import { confirmDialog, imageDataFrom, loadImage } from "./dom";
+import { confirmDialog, imageDataFrom, loadImage, noticeDialog } from "./dom";
 import * as history from "./history";
 import { persistNow, persistSoon } from "./persist";
 import { getPlaybackRate, onPlaybackRateChange } from "./playbackSpeed";
@@ -90,7 +90,6 @@ export function selectAllFrames(): void {
   });
   setState({ dirty: true, status: "已全部勾选", loopCandidates: [] });
   persistSoon();
-  startPreview("selected");
 }
 
 export function deselectAllFrames(): void {
@@ -107,7 +106,6 @@ export function deselectAllFrames(): void {
   });
   setState({ dirty: true, status: "已全部取消勾选", loopCandidates: [] });
   persistSoon();
-  startPreview("selected");
 }
 
 async function removeUnselected(): Promise<void> {
@@ -212,7 +210,6 @@ async function applyLoopAt(index: number): Promise<void> {
     status: `已应用「${candidate.label}」：胶片序号 ${candidate.startDisplay}–${candidate.endDisplay}`,
   });
   persistSoon();
-  startPreview("selected");
 }
 
 async function drawPreviewFrame(id: string): Promise<void> {
@@ -229,7 +226,7 @@ async function drawPreviewFrame(id: string): Promise<void> {
   const dw = img.width * scale;
   const dh = img.height * scale;
   ctx.drawImage(img, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
-  document.getElementById("preview-info")!.textContent = `第 ${frame.index + 1} 帧`;
+  syncPreviewScrub();
 }
 
 export function syncOrganizePreviewSize(): void {
@@ -244,15 +241,53 @@ export function syncOrganizePreviewSize(): void {
   if (lastPreviewId) void drawPreviewFrame(lastPreviewId);
 }
 
-function stopPreview(): void {
+let playbackSetKey = "";
+let sequenceNoticeOpen = false;
+
+function workingSetKey(): string {
+  return (state.project?.frames ?? []).map((frame) => `${frame.id}:${frame.inWorkingSet ? 1 : 0}`).join("|");
+}
+
+function queueSequenceNotice(): void {
+  if (sequenceNoticeOpen) return;
+  sequenceNoticeOpen = true;
+  void noticeDialog("动画序列已刷新").finally(() => {
+    sequenceNoticeOpen = false;
+  });
+}
+
+function syncPreviewScrub(): void {
+  const ids = playing ? previewIds : selectedFrames().map((frame) => frame.id);
+  const total = ids.length;
+  const index = total ? Math.min(previewIndex, total - 1) : 0;
+  const scrub = document.getElementById("preview-scrub") as HTMLInputElement | null;
+  if (scrub) {
+    scrub.min = "0";
+    scrub.max = String(Math.max(0, total - 1));
+    scrub.value = String(index);
+    scrub.disabled = total === 0;
+  }
+  const info = document.getElementById("preview-info");
+  if (info) info.textContent = total ? `${index + 1} / ${total}` : "没有可播放的选中帧";
+}
+
+function stopPreview(resetSequence = false): void {
   playing = false;
   window.clearInterval(previewTimer);
+  if (resetSequence) {
+    previewIds = [];
+    previewIndex = 0;
+  }
   syncPreviewPlayLabel();
+  syncPreviewScrub();
 }
 
 function previewIntervalMs(): number {
-  const fps = Math.max(4, Math.min(30, state.project?.extract.fps || 12));
-  return 1000 / (fps * getPlaybackRate());
+  const extractMode = state.project?.extract.mode;
+  const fps = extractMode === "frames" && (state.project?.extract.sourceFps || 0) > 0
+    ? state.project!.extract.sourceFps!
+    : Math.max(4, Math.min(30, state.project?.extract.fps || 12));
+  return 1000 / (Math.max(1, Math.min(60, fps)) * getPlaybackRate());
 }
 
 function schedulePreviewTick(): void {
@@ -261,13 +296,14 @@ function schedulePreviewTick(): void {
   previewTimer = window.setInterval(() => {
     if (!playing || !previewIds.length) return;
     previewIndex = (previewIndex + 1) % previewIds.length;
+    syncPreviewScrub();
     void drawPreviewFrame(previewIds[previewIndex]);
   }, previewIntervalMs());
 }
 
 function syncPreviewPlayLabel(): void {
   const btn = document.getElementById("btn-preview-play");
-  if (btn) btn.textContent = playing ? "暂停" : "播放预览";
+  if (btn) btn.textContent = playing ? "暂停" : "播放动画";
 }
 
 function startPreview(mode: "selected" | "loop", candidate?: LoopCandidate): void {
@@ -280,12 +316,15 @@ function startPreview(mode: "selected" | "loop", candidate?: LoopCandidate): voi
     previewIds = selected.map((f) => f.id);
   }
   if (!previewIds.length) {
-    document.getElementById("preview-info")!.textContent = "没有可播放的选中帧";
+    previewIndex = 0;
     syncPreviewPlayLabel();
+    syncPreviewScrub();
     return;
   }
   previewIndex = 0;
+  playbackSetKey = workingSetKey();
   playing = true;
+  syncPreviewScrub();
   void drawPreviewFrame(previewIds[0]);
   schedulePreviewTick();
   syncPreviewPlayLabel();
@@ -321,6 +360,13 @@ export function initOrganize(): void {
   document.getElementById("btn-remove")!.addEventListener("click", () => void removeUnselected());
   document.getElementById("btn-find-loop")!.addEventListener("click", () => void findLoops());
   document.getElementById("btn-preview-play")!.addEventListener("click", toggleOrganizePreview);
+  (document.getElementById("preview-scrub") as HTMLInputElement).addEventListener("input", (ev) => {
+    if (!previewIds.length) previewIds = selectedFrames().map((frame) => frame.id);
+    if (!previewIds.length) return;
+    previewIndex = Math.max(0, Math.min(previewIds.length - 1, Number((ev.target as HTMLInputElement).value)));
+    syncPreviewScrub();
+    void drawPreviewFrame(previewIds[previewIndex]);
+  });
   onPlaybackRateChange(() => {
     if (playing) schedulePreviewTick();
   });
@@ -346,8 +392,14 @@ export function initOrganize(): void {
 
 export function syncOrganize(): void {
   document.getElementById("btn-undo-decimate")!.toggleAttribute("disabled", !history.canUndo());
+  if (playing && workingSetKey() !== playbackSetKey) {
+    playbackSetKey = workingSetKey();
+    stopPreview(true);
+    queueSequenceNotice();
+  }
   if (state.editTab === "organize") {
     renderLoopList();
     syncOrganizePreviewSize();
+    if (!playing) syncPreviewScrub();
   }
 }

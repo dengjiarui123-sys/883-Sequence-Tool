@@ -2,6 +2,7 @@ node_modules/
 dist/
 data/
 workspace/
+tools/ffmpeg/
 *.local
 .DS_Store
 Thumbs.db
