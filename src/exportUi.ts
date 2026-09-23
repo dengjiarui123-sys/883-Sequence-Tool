@@ -1,7 +1,7 @@
 import { zipSync } from "fflate";
-import { frameUrl } from "./api";
+import { frameUrl, pickSavePath, writeExportFile } from "./api";
 import { canvasToPngBlob, createCellCanvas, drawCell, drawSpriteSheetPage, layoutSheet } from "./drawCell";
-import { downloadBlob, loadImage } from "./dom";
+import { loadImage } from "./dom";
 import { persistSoon } from "./persist";
 import * as history from "./history";
 import { selectedFrames, setState, state } from "./store";
@@ -32,10 +32,12 @@ function readSettings(): ExportSettings | null {
   const cellW = custom ? Number((document.getElementById("cell-w") as HTMLInputElement).value) : Number(preset);
   const cellH = custom ? Number((document.getElementById("cell-h") as HTMLInputElement).value) : Number(preset);
   const scalePct = Number((document.getElementById("scale") as HTMLInputElement).value);
-  document.getElementById("scale-val")!.textContent = `${scalePct}%`;
+  const scaleBox = document.getElementById("scale-val") as HTMLInputElement;
+  if (document.activeElement !== scaleBox) scaleBox.value = String(scalePct);
   const fill = (document.getElementById("fill") as HTMLSelectElement).value as "transparent" | "solid";
   document.getElementById("fill-color-field")!.hidden = fill !== "solid";
   document.getElementById("atlas-field")!.hidden = format !== "spritesheet";
+  document.getElementById("zip-prefix-field")!.hidden = format !== "zip";
   const fillColor = hexToRgb((document.getElementById("fill-color") as HTMLInputElement).value);
   const next: ExportSettings = {
     format,
@@ -72,7 +74,7 @@ export function syncExportFields(): void {
   (document.getElementById("fit") as HTMLSelectElement).value = ex.fit;
   const pct = Math.round(ex.scale.x * 100);
   (document.getElementById("scale") as HTMLInputElement).value = String(pct);
-  document.getElementById("scale-val")!.textContent = `${pct}%`;
+  (document.getElementById("scale-val") as HTMLInputElement).value = String(pct);
   (document.getElementById("off-x") as HTMLInputElement).value = String(ex.offset.x);
   (document.getElementById("off-y") as HTMLInputElement).value = String(ex.offset.y);
   (document.getElementById("fill") as HTMLSelectElement).value = ex.fill;
@@ -81,6 +83,7 @@ export function syncExportFields(): void {
   (document.getElementById("atlas-size") as HTMLSelectElement).value = String(ex.atlasSize);
   (document.getElementById("zip-prefix") as HTMLInputElement).value = ex.zipPrefix || "";
   document.getElementById("atlas-field")!.hidden = ex.format !== "spritesheet";
+  document.getElementById("zip-prefix-field")!.hidden = ex.format !== "zip";
 }
 
 async function loadedSelected() {
@@ -150,7 +153,13 @@ export async function refreshExportPreview(): Promise<void> {
   }
 }
 
-async function exportZip(settings: ExportSettings): Promise<void> {
+function suggestedExportBase(): string {
+  const label = state.project?.label || state.project?.id || "序列";
+  const base = label.replace(/[\\/:*?"<>|]+/g, "_").trim() || "序列";
+  return base.slice(0, 80);
+}
+
+async function exportZipBytes(settings: ExportSettings): Promise<Uint8Array> {
   const loaded = await loadedSelected();
   const cell = createCellCanvas(settings.cell.w, settings.cell.h);
   const ctx = cell.getContext("2d");
@@ -162,11 +171,10 @@ async function exportZip(settings: ExportSettings): Promise<void> {
     const name = `${settings.zipPrefix}${String(i + 1).padStart(3, "0")}.png`;
     files[name] = new Uint8Array(await blob.arrayBuffer());
   }
-  const zipped = zipSync(files, { level: 6 });
-      downloadBlob(new Blob([new Uint8Array(zipped)], { type: "application/zip" }), `${state.project?.id || "sequence"}.zip`);
+  return zipSync(files, { level: 6 });
 }
 
-async function exportSheet(settings: ExportSettings): Promise<void> {
+async function exportSheetBytes(settings: ExportSettings): Promise<{ bytes: Uint8Array; mime: string }> {
   const loaded = await loadedSelected();
   const layout = layoutSheet(
     loaded.length,
@@ -177,8 +185,8 @@ async function exportSheet(settings: ExportSettings): Promise<void> {
   );
   if (layout.pages === 1) {
     const page = drawSpriteSheetPage(loaded, settings, 0);
-    downloadBlob(await canvasToPngBlob(page), `${state.project?.id || "sheet"}.png`);
-    return;
+    const blob = await canvasToPngBlob(page);
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), mime: "image/png" };
   }
   const files: Record<string, Uint8Array> = {};
   for (let i = 0; i < layout.pages; i++) {
@@ -186,8 +194,7 @@ async function exportSheet(settings: ExportSettings): Promise<void> {
     const blob = await canvasToPngBlob(page);
     files[`spritesheet_${String(i + 1).padStart(2, "0")}.png`] = new Uint8Array(await blob.arrayBuffer());
   }
-  const zipped = zipSync(files, { level: 6 });
-      downloadBlob(new Blob([new Uint8Array(zipped)], { type: "application/zip" }), `${state.project?.id || "sheet"}_pages.zip`);
+  return { bytes: zipSync(files, { level: 6 }), mime: "application/zip" };
 }
 
 export async function downloadExport(): Promise<void> {
@@ -198,11 +205,32 @@ export async function downloadExport(): Promise<void> {
     setState({ status: "没有选中帧可导出" });
     return;
   }
+  const base = suggestedExportBase();
+  const sheetPages = settings.format === "spritesheet"
+    ? layoutSheet(count, settings.cell.w, settings.cell.h, settings.atlasSize, settings.padding).pages
+    : 1;
+  const asPng = settings.format === "spritesheet" && sheetPages === 1;
+  const suggestedName = asPng ? `${base}.png` : settings.format === "spritesheet" ? `${base}_pages.zip` : `${base}.zip`;
   try {
+    const picked = await pickSavePath(suggestedName, {
+      kind: "export",
+      title: "导出",
+      defaultExt: asPng ? "png" : "zip",
+      filter: asPng ? "PNG (*.png)|*.png" : "ZIP (*.zip)|*.zip",
+    });
+    if (picked.canceled || !picked.path) {
+      setState({ status: "已取消导出" });
+      return;
+    }
     setState({ status: "正在导出…" });
-    if (settings.format === "zip") await exportZip(settings);
-    else await exportSheet(settings);
-    setState({ exportDone: true, status: `已导出 ${count} 帧` });
+    if (settings.format === "zip") {
+      const bytes = await exportZipBytes(settings);
+      await writeExportFile(picked.path, bytes, "application/zip");
+    } else {
+      const packed = await exportSheetBytes(settings);
+      await writeExportFile(picked.path, packed.bytes, packed.mime);
+    }
+    setState({ exportDone: true, status: `已导出 ${count} 帧到 ${picked.path}` });
     persistSoon();
   } catch (err) {
     setState({ status: `导出失败：${(err as Error).message}` });

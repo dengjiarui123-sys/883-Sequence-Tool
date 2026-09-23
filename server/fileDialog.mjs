@@ -40,16 +40,16 @@ async function withTempScript(name, body) {
   }
 }
 
-export async function showSaveDialog({ fileName, initialDir }) {
+export async function showSaveDialog({ fileName, initialDir, title, filter, defaultExt }) {
   const init = initialDir ? `$d.InitialDirectory = ${psQuote(initialDir)}` : "";
   return withTempScript(
     "vsp-save",
     `$OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
 Add-Type -AssemblyName System.Windows.Forms
 $d = New-Object System.Windows.Forms.SaveFileDialog
-$d.Title = '保存工程'
-$d.Filter = '工程包 (*.zip)|*.zip'
-$d.DefaultExt = 'zip'
+$d.Title = ${psQuote(title || "保存工程")}
+$d.Filter = ${psQuote(filter || "工程包 (*.zip)|*.zip")}
+$d.DefaultExt = ${psQuote(defaultExt || "zip")}
 $d.AddExtension = $true
 $d.OverwritePrompt = $true
 $d.FileName = ${psQuote(fileName)}

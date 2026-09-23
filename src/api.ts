@@ -209,14 +209,26 @@ export async function requestMatte(png: Blob): Promise<MatteResult> {
   };
 }
 
-export async function pickSavePath(suggestedName: string): Promise<{ canceled: boolean; path?: string; dir?: string }> {
+export async function pickSavePath(
+  suggestedName: string,
+  options?: { title?: string; filter?: string; defaultExt?: string; kind?: "project" | "export" },
+): Promise<{ canceled: boolean; path?: string; dir?: string }> {
   return parseJson(
     await fetch("/api/dialogs/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ suggestedName }),
+      body: JSON.stringify({ suggestedName, ...options }),
     }),
   );
+}
+
+export async function writeExportFile(filePath: string, data: Uint8Array, mime: string): Promise<void> {
+  const res = await fetch(`/api/export-file?path=${encodeURIComponent(filePath)}`, {
+    method: "PUT",
+    headers: { "Content-Type": mime },
+    body: new Blob([new Uint8Array(data)]),
+  });
+  await parseJson(res);
 }
 
 export async function pickOpenPath(): Promise<{ canceled: boolean; path?: string; dir?: string }> {

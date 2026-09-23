@@ -61,11 +61,19 @@
             <span id="video-time">0.00 / 0.00</span>
           </div>
           <div class="speed-row">
-            <span class="speed-label">播放速度</span>
-            <span class="speed-end">慢</span>
-            <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
-            <span class="speed-end">快</span>
-            <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
+            <div class="speed-head">
+              <span class="speed-label">播放速度</span>
+              <span class="num-unit">
+                <input class="num-box" type="number" data-speed-num min="0.25" max="2" step="0.05" value="1.00" aria-label="播放速度数值" />
+                ×
+              </span>
+            </div>
+            <div class="speed-track">
+              <span class="speed-end">慢</span>
+              <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
+              <span class="speed-end">快</span>
+              <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
+            </div>
           </div>
         </div>
         <div class="splitter splitter-col" id="split-extract" role="separator" aria-orientation="vertical" aria-label="调整提取页栏宽" title="拖拽调整宽度，双击恢复默认"></div>
@@ -88,7 +96,14 @@
               <option value="frames">全部编码帧</option>
             </select>
           </label>
-          <label class="field" id="fps-field"><span>每秒抽取 <span id="fps-val">20</span> 帧</span>
+          <label class="field" id="fps-field">
+            <span class="slider-head">
+              <span>每秒抽取</span>
+              <span class="num-unit">
+                <input id="fps-val" class="num-box" type="number" min="1" max="30" step="1" value="20" aria-label="每秒抽取帧数" />
+                帧
+              </span>
+            </span>
             <span class="field-note">每秒从视频中提取多少个画面</span>
             <input id="fps" type="range" min="1" max="30" step="1" value="20" />
           </label>
@@ -164,11 +179,19 @@
                 <span id="preview-info">0 / 0</span>
               </div>
               <div class="speed-row speed-row-dark">
-                <span class="speed-label">播放速度</span>
-                <span class="speed-end">慢</span>
-                <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
-                <span class="speed-end">快</span>
-                <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
+                <div class="speed-head">
+                  <span class="speed-label">播放速度</span>
+                  <span class="num-unit">
+                    <input class="num-box" type="number" data-speed-num min="0.25" max="2" step="0.05" value="1.00" aria-label="播放速度数值" />
+                    ×
+                  </span>
+                </div>
+                <div class="speed-track">
+                  <span class="speed-end">慢</span>
+                  <input class="speed-slider" type="range" data-speed min="0.25" max="2" step="0.05" value="1" aria-label="播放速度" />
+                  <span class="speed-end">快</span>
+                  <button type="button" class="btn" data-speed-reset title="回到默认正常播放速率">重置</button>
+                </div>
               </div>
             </div>
           </aside>
@@ -209,7 +232,14 @@
               <option value="stretch">拉伸</option>
             </select>
           </label>
-          <label class="field">缩放 <span id="scale-val">100%</span>
+          <label class="field">
+            <span class="slider-head">
+              <span>缩放</span>
+              <span class="num-unit">
+                <input id="scale-val" class="num-box" type="number" min="4" max="300" step="1" value="100" aria-label="缩放百分比" />
+                %
+              </span>
+            </span>
             <input id="scale" type="range" min="4" max="300" step="1" value="100" />
           </label>
           <label class="field">偏移 X
@@ -236,12 +266,12 @@
               <option>8192</option>
             </select>
           </label>
-          <label class="field">ZIP 文件名前缀
+          <label class="field" id="zip-prefix-field">ZIP 文件名前缀
             <input id="zip-prefix" type="text" placeholder="可选" />
           </label>
           <p class="hint" id="export-hint">只导出选中帧。Sprite Sheet 格子等大、间距 0，不做 trim。</p>
           <div class="side-actions">
-            <button type="button" class="btn btn-primary" id="btn-download">导出 / 下载</button>
+            <button type="button" class="btn btn-primary" id="btn-download" title="选择保存位置并命名">导出</button>
           </div>
         </aside>
         <div class="splitter splitter-col" id="split-export" role="separator" aria-orientation="vertical" aria-label="调整导出页栏宽" title="拖拽调整宽度，双击恢复默认"></div>
@@ -311,24 +341,44 @@
               <div id="chroma-swatches" class="chroma-swatches"></div>
               <p id="sample-rgb" class="hint">未采样</p>
               <button type="button" class="btn" id="btn-chroma-clear" hidden>清空色样</button>
-              <label class="field">容差 <span id="tol-val">24</span>
-                <input id="tolerance" type="range" min="1" max="80" value="24" />
+              <label class="field">
+                <span class="slider-head">
+                  <span>容差</span>
+                  <input id="tol-val" class="num-box" type="number" min="1" max="80" step="1" value="24" aria-label="容差" />
+                </span>
+                <input id="tolerance" type="range" min="1" max="80" step="1" value="24" />
               </label>
-              <label class="field">Halo 收缩 <span id="halo-val">2</span>
-                <input id="halo" type="range" min="0" max="12" value="2" />
+              <label class="field">
+                <span class="slider-head">
+                  <span>Halo 收缩</span>
+                  <input id="halo-val" class="num-box" type="number" min="0" max="12" step="1" value="2" aria-label="Halo 收缩" />
+                </span>
+                <input id="halo" type="range" min="0" max="12" step="1" value="2" />
               </label>
-              <label class="field">去溢色 <span id="despill-val">8</span>
-                <input id="despill" type="range" min="0" max="20" value="8" />
+              <label class="field">
+                <span class="slider-head">
+                  <span>去溢色</span>
+                  <input id="despill-val" class="num-box" type="number" min="0" max="20" step="1" value="8" aria-label="去溢色" />
+                </span>
+                <input id="despill" type="range" min="0" max="20" step="1" value="8" />
               </label>
             </div>
             <div id="biref-panel" hidden>
               <p class="hint">对当前工作帧做 AI 主体遮罩（已透明的区域会保留）。切到此方法不会自动跑；点开始推理后才下载/推理。拖阈值 / 羽化只重画。</p>
               <p id="biref-status" class="matte-status">点开始推理</p>
-              <label class="field">阈值 <span id="biref-th-val">0.50</span>
+              <label class="field">
+                <span class="slider-head">
+                  <span>阈值</span>
+                  <input id="biref-th-val" class="num-box" type="number" min="0" max="1" step="0.01" value="0.50" aria-label="阈值" />
+                </span>
                 <input id="biref-threshold" type="range" min="0" max="1" step="0.01" value="0.5" />
               </label>
-              <label class="field">羽化 <span id="biref-feather-val">1</span>
-                <input id="biref-feather" type="range" min="0" max="8" value="1" />
+              <label class="field">
+                <span class="slider-head">
+                  <span>羽化</span>
+                  <input id="biref-feather-val" class="num-box" type="number" min="0" max="8" step="1" value="1" aria-label="羽化" />
+                </span>
+                <input id="biref-feather" type="range" min="0" max="8" step="1" value="1" />
               </label>
               <button type="button" class="btn btn-primary" id="btn-biref-rerun">开始推理</button>
             </div>

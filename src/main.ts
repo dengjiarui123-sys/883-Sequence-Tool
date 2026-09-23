@@ -8,6 +8,7 @@ import { deselectCurrentFrame, initFilmstrip, renderFilmstrip } from "./filmstri
 import * as history from "./history";
 import { initOrganize, syncOrganize, toggleOrganizePreview } from "./organizeUi";
 import { initPlaybackSpeed } from "./playbackSpeed";
+import { initSliderFields } from "./sliderField";
 import { formatSavedClock, persistNow, persistSoon } from "./persist";
 import { openProjectFromDisk, saveProjectFile } from "./projectFile";
 import { patchProject, selectedFrames, setState, state, subscribe, isEditConfirmed } from "./store";
@@ -280,6 +281,7 @@ async function boot(): Promise<void> {
   initShell();
   initLayout();
   initPlaybackSpeed();
+  initSliderFields();
   await restore();
   renderShell();
 }

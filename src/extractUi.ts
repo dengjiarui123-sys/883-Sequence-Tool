@@ -169,7 +169,8 @@ export function refreshExtractStats(): void {
   const end = Number((document.getElementById("end-sec") as HTMLInputElement).value);
   const fps = Number((document.getElementById("fps") as HTMLInputElement).value);
   const mode = readExtractMode();
-  (document.getElementById("fps-val") as HTMLElement).textContent = String(fps);
+  const fpsBox = document.getElementById("fps-val") as HTMLInputElement;
+  if (document.activeElement !== fpsBox) fpsBox.value = String(fps);
   const span = Number.isFinite(end) && Number.isFinite(start) ? Math.max(0, end - start) : 0;
   const sourceFps = project?.extract.sourceFps || 0;
   if (mode === "frames") {

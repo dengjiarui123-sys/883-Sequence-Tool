@@ -11,10 +11,23 @@ function clampRate(next: number): number {
   return Math.min(SPEED_MAX, Math.max(SPEED_MIN, n));
 }
 
+function formatSpeed(n: number): string {
+  return (Math.round(n * 100) / 100).toFixed(2);
+}
+
+function isPartialNumber(raw: string): boolean {
+  return raw === "" || raw === "-" || raw === "." || raw === "-." || raw.endsWith(".");
+}
+
 function syncSliders(): void {
+  const text = formatSpeed(rate);
   document.querySelectorAll<HTMLInputElement>("[data-speed]").forEach((el) => {
     const value = String(rate);
     if (el.value !== value) el.value = value;
+  });
+  document.querySelectorAll<HTMLInputElement>("[data-speed-num]").forEach((el) => {
+    if (document.activeElement === el) return;
+    if (el.value !== text) el.value = text;
   });
 }
 
@@ -57,6 +70,24 @@ export function initPlaybackSpeed(): void {
     el.step = "0.05";
     el.value = String(rate);
     el.addEventListener("input", () => setPlaybackRate(Number(el.value)));
+  });
+  document.querySelectorAll<HTMLInputElement>("[data-speed-num]").forEach((el) => {
+    el.min = String(SPEED_MIN);
+    el.max = String(SPEED_MAX);
+    el.step = "0.05";
+    el.value = formatSpeed(rate);
+    el.addEventListener("input", () => {
+      const raw = el.value.trim();
+      if (isPartialNumber(raw)) return;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < SPEED_MIN || n > SPEED_MAX) return;
+      setPlaybackRate(n);
+    });
+    el.addEventListener("change", () => {
+      const n = Number(el.value);
+      setPlaybackRate(Number.isFinite(n) ? n : rate);
+      el.value = formatSpeed(rate);
+    });
   });
   document.querySelectorAll("[data-speed-reset]").forEach((el) => {
     el.addEventListener("click", () => resetPlaybackRate());

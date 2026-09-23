@@ -14,6 +14,7 @@ const PROJECTS_DIR = path.join(DATA_DIR, "projects");
 const WORKSPACE_DIR = path.join(ROOT, "workspace", "projects");
 const REGISTRY_PATH = path.join(DATA_DIR, "projects.json");
 const LAST_PACK_PATH = path.join(DATA_DIR, "last-project-file.json");
+const LAST_EXPORT_PATH = path.join(DATA_DIR, "last-export-file.json");
 
 const ID_RE = /^[A-Za-z0-9_-]+$/;
 const FRAME_FILE_RE = /^[A-Za-z0-9_.-]+\.png$/i;
@@ -177,6 +178,56 @@ function normalizePackPath(filePath) {
   return `${abs}.vsp.zip`;
 }
 
+function dialogText(value, fallback) {
+  const text = String(value ?? "").trim() || fallback;
+  if (/[\r\n\0]/.test(text)) {
+    throw Object.assign(new Error("对话框参数无效"), { status: 400 });
+  }
+  return text;
+}
+
+function assertLocalPath(filePath) {
+  if (!filePath || typeof filePath !== "string") {
+    throw Object.assign(new Error("缺少文件路径"), { status: 400 });
+  }
+  const abs = path.resolve(String(filePath).replace(/^["']+|["']+$/g, "").trim());
+  if (!/^[A-Za-z]:[\\/]/.test(abs) && !abs.startsWith("\\\\")) {
+    throw Object.assign(new Error("只接受本机绝对路径"), { status: 400 });
+  }
+  return abs;
+}
+
+function assertExportPath(filePath, ext) {
+  let abs = assertLocalPath(filePath);
+  const want = ext === "png" || ext === "zip" ? ext : "";
+  if (want && !abs.toLowerCase().endsWith(`.${want}`)) {
+    if (/\.[A-Za-z0-9]+$/.test(abs)) {
+      throw Object.assign(new Error(want === "png" ? "请保存为 .png" : "请保存为 .zip"), { status: 400 });
+    }
+    abs = `${abs}.${want}`;
+  }
+  if (!/\.(png|zip)$/i.test(abs)) {
+    throw Object.assign(new Error("只接受 .png 或 .zip"), { status: 400 });
+  }
+  return abs;
+}
+
+async function loadLastExport() {
+  try {
+    const parsed = JSON.parse(await fs.readFile(LAST_EXPORT_PATH, "utf8"));
+    if (parsed && typeof parsed.dir === "string") return parsed;
+  } catch {
+    /* 还没有导出过 */
+  }
+  return { path: "", dir: "" };
+}
+
+async function saveLastExport(filePath) {
+  const record = { path: filePath, dir: path.dirname(filePath) };
+  await atomicWriteJson(LAST_EXPORT_PATH, record);
+  return record;
+}
+
 function assertPackPath(filePath) {
   if (!filePath || typeof filePath !== "string") {
     throw Object.assign(new Error("缺少文件路径"), { status: 400 });
@@ -319,13 +370,35 @@ async function handleApi(req, res) {
 
     if (req.method === "POST" && parts.length === 3 && parts[1] === "dialogs" && parts[2] === "save") {
       const body = JSON.parse((await readBody(req, 1024 * 1024)).toString("utf8") || "{}");
-      const last = await loadLastPack();
+      const kind = body.kind === "export" ? "export" : "project";
+      const lastPack = await loadLastPack();
+      const lastExport = kind === "export" ? await loadLastExport() : { dir: "" };
+      const defaultExt = kind === "export" ? dialogText(body.defaultExt, "zip") : "zip";
+      if (kind === "export" && defaultExt !== "png" && defaultExt !== "zip") {
+        sendError(res, 400, "导出只能是 png 或 zip");
+        return true;
+      }
       const picked = await showSaveDialog({
-        fileName: String(body.suggestedName || "未命名序列.vsp.zip"),
-        initialDir: last.dir || "",
+        fileName: dialogText(body.suggestedName, kind === "export" ? `序列.${defaultExt}` : "未命名序列.vsp.zip"),
+        initialDir: (kind === "export" ? lastExport.dir : "") || lastPack.dir || "",
+        title: dialogText(body.title, kind === "export" ? "导出" : "保存工程"),
+        filter: dialogText(
+          body.filter,
+          kind === "export"
+            ? defaultExt === "png"
+              ? "PNG (*.png)|*.png"
+              : "ZIP (*.zip)|*.zip"
+            : "工程包 (*.zip)|*.zip",
+        ),
+        defaultExt,
       });
       if (!picked) {
-        json(res, 200, { canceled: true, ...last });
+        json(res, 200, { canceled: true, dir: (kind === "export" ? lastExport.dir : lastPack.dir) || "" });
+        return true;
+      }
+      if (kind === "export") {
+        const abs = assertExportPath(picked, defaultExt);
+        json(res, 200, { canceled: false, ...(await saveLastExport(abs)) });
         return true;
       }
       const abs = assertPackPath(picked);
@@ -342,6 +415,14 @@ async function handleApi(req, res) {
       }
       const abs = assertPackPath(picked);
       json(res, 200, { canceled: false, ...(await saveLastPack(abs)) });
+      return true;
+    }
+
+    if (parts.length === 2 && parts[1] === "export-file" && req.method === "PUT") {
+      const exportPath = assertExportPath(url.searchParams.get("path") || "", "");
+      const buf = await readBody(req, 256 * 1024 * 1024);
+      await atomicWriteFile(exportPath, buf);
+      json(res, 200, await saveLastExport(exportPath));
       return true;
     }
 

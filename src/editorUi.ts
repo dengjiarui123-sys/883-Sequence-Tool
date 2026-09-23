@@ -272,11 +272,11 @@ function applyEditorSnap(snap: EditorSnap): void {
   el<HTMLInputElement>("despill").value = String(snap.despill);
   el<HTMLInputElement>("biref-threshold").value = String(snap.threshold);
   el<HTMLInputElement>("biref-feather").value = String(snap.feather);
-  el("tol-val").textContent = String(snap.tolerance);
-  el("halo-val").textContent = String(snap.halo);
-  el("despill-val").textContent = String(snap.despill);
-  el("biref-th-val").textContent = snap.threshold.toFixed(2);
-  el("biref-feather-val").textContent = String(snap.feather);
+  el<HTMLInputElement>("tol-val").value = String(snap.tolerance);
+  el<HTMLInputElement>("halo-val").value = String(snap.halo);
+  el<HTMLInputElement>("despill-val").value = String(snap.despill);
+  el<HTMLInputElement>("biref-th-val").value = snap.threshold.toFixed(2);
+  el<HTMLInputElement>("biref-feather-val").value = String(snap.feather);
   setMethodUi(snap.method);
   renderSwatches();
   refreshPreview();
@@ -663,11 +663,11 @@ async function openEditor(): Promise<void> {
   el<HTMLInputElement>("despill").value = "8";
   el<HTMLInputElement>("biref-threshold").value = "0.5";
   el<HTMLInputElement>("biref-feather").value = "1";
-  el("tol-val").textContent = "24";
-  el("halo-val").textContent = "2";
-  el("despill-val").textContent = "8";
-  el("biref-th-val").textContent = "0.50";
-  el("biref-feather-val").textContent = "1";
+  el<HTMLInputElement>("tol-val").value = "24";
+  el<HTMLInputElement>("halo-val").value = "2";
+  el<HTMLInputElement>("despill-val").value = "8";
+  el<HTMLInputElement>("biref-th-val").value = "0.50";
+  el<HTMLInputElement>("biref-feather-val").value = "1";
   setBirefStatus("点开始推理");
   setMethodUi("chroma");
   applyPreviewBg("checker");
@@ -678,7 +678,8 @@ async function openEditor(): Promise<void> {
   rememberEditorBaseline();
   syncBirefRunBtn();
   syncEditorNav();
-  requestAnimationFrame(() => zoomToFit());
+  if (zoomMode === "manual") requestAnimationFrame(() => applyCanvasCss());
+  else requestAnimationFrame(() => zoomToFit());
   if (loaded.copied) {
     setState({ status: "本工程无抽出原图备份，已用当前帧补了一份" });
   }
@@ -1096,11 +1097,6 @@ export function initEditor(): void {
     });
     node.addEventListener("input", () => {
       if (!sliderSnap) sliderSnap = editorBaseline;
-      el("tol-val").textContent = el<HTMLInputElement>("tolerance").value;
-      el("halo-val").textContent = el<HTMLInputElement>("halo").value;
-      el("despill-val").textContent = el<HTMLInputElement>("despill").value;
-      el("biref-th-val").textContent = Number(el<HTMLInputElement>("biref-threshold").value).toFixed(2);
-      el("biref-feather-val").textContent = el<HTMLInputElement>("biref-feather").value;
       refreshPreview();
       window.clearTimeout(sliderTimer);
       sliderTimer = window.setTimeout(flushEditorSliderHistory, 400);
