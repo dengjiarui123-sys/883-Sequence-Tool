@@ -257,7 +257,7 @@
           <label class="field" id="fill-color-field" hidden>纯色
             <input id="fill-color" type="color" value="#000000" />
           </label>
-          <label class="field" id="atlas-field">图集边长
+          <label class="field" id="atlas-field">图集最大边长
             <select id="atlas-size">
               <option>512</option>
               <option>1024</option>
@@ -269,7 +269,7 @@
           <label class="field" id="zip-prefix-field">ZIP 文件名前缀
             <input id="zip-prefix" type="text" placeholder="可选" />
           </label>
-          <p class="hint" id="export-hint">只导出选中帧。Sprite Sheet 格子等大、间距 0，不做 trim。</p>
+          <p class="hint" id="export-hint">只导出选中帧。Sprite Sheet 按最大边长排满每行，自动去掉末尾空行、空列；保留等大格子，间距 0。Unity 的 Max Size 限制整张图集，应不小于图集最长边；256×256 是切片格子大小。</p>
           <div class="side-actions">
             <button type="button" class="btn btn-primary" id="btn-download" title="选择保存位置并命名">导出</button>
           </div>

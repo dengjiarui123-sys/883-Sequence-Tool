@@ -60,8 +60,8 @@ export function layoutSheet(
   }
   const strideW = cellW + padding;
   const strideH = cellH + padding;
-  const columns = Math.floor(atlasSize / strideW);
-  const rowsPerPage = Math.floor(atlasSize / strideH);
+  const columns = Math.floor((atlasSize + padding) / strideW);
+  const rowsPerPage = Math.floor((atlasSize + padding) / strideH);
   if (columns < 1 || rowsPerPage < 1) {
     throw new Error("格子大于图集边长，请减小导出分辨率或增大图集");
   }
@@ -70,23 +70,40 @@ export function layoutSheet(
   return { columns, rowsPerPage, framesPerPage, pages };
 }
 
+/** 只去掉整页末尾的空行/空列；保留完整格子，不缩放像素。 */
+export function sheetPageLayout(
+  frameCount: number,
+  settings: ExportSettings,
+  pageIndex: number,
+): { start: number; count: number; columns: number; rows: number; width: number; height: number } {
+  const layout = layoutSheet(frameCount, settings.cell.w, settings.cell.h, settings.atlasSize, settings.padding);
+  if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= layout.pages) {
+    throw new Error("图集页码超出范围");
+  }
+  const start = pageIndex * layout.framesPerPage;
+  const count = Math.min(layout.framesPerPage, frameCount - start);
+  const columns = Math.max(1, Math.min(layout.columns, count));
+  const rows = Math.max(1, Math.ceil(count / columns));
+  return {
+    start,
+    count,
+    columns,
+    rows,
+    width: columns * settings.cell.w + (columns - 1) * settings.padding,
+    height: rows * settings.cell.h + (rows - 1) * settings.padding,
+  };
+}
+
 export function drawSpriteSheetPage(
   frames: Array<{ source: CanvasImageSource; srcW: number; srcH: number }>,
   settings: ExportSettings,
   pageIndex: number,
 ): HTMLCanvasElement {
-  const { columns, framesPerPage } = layoutSheet(
-    frames.length,
-    settings.cell.w,
-    settings.cell.h,
-    settings.atlasSize,
-    settings.padding,
-  );
-  const start = pageIndex * framesPerPage;
-  const slice = frames.slice(start, start + framesPerPage);
+  const { start, count, columns, width, height } = sheetPageLayout(frames.length, settings, pageIndex);
+  const slice = frames.slice(start, start + count);
   const canvas = document.createElement("canvas");
-  canvas.width = settings.atlasSize;
-  canvas.height = settings.atlasSize;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("无法创建画布");
   ctx.clearRect(0, 0, canvas.width, canvas.height);

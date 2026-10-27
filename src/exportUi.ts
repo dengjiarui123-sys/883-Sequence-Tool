@@ -1,6 +1,6 @@
 import { zipSync } from "fflate";
 import { frameUrl, pickSavePath, writeExportFile } from "./api";
-import { canvasToPngBlob, createCellCanvas, drawCell, drawSpriteSheetPage, layoutSheet } from "./drawCell";
+import { canvasToPngBlob, createCellCanvas, drawCell, drawSpriteSheetPage, layoutSheet, sheetPageLayout } from "./drawCell";
 import { loadImage } from "./dom";
 import { persistSoon } from "./persist";
 import * as history from "./history";
@@ -135,11 +135,12 @@ export async function refreshExportPreview(): Promise<void> {
   canvas.width = page.width;
   canvas.height = page.height;
   canvas.getContext("2d")!.drawImage(page, 0, 0);
-  document.getElementById("export-preview-title")!.textContent = `Sprite Sheet · cell ${settings.cell.w}×${settings.cell.h}`;
+  const pageLayout = sheetPageLayout(loaded.length, settings, sheetPage);
+  document.getElementById("export-preview-title")!.textContent = `Sprite Sheet · ${page.width}×${page.height} · 单格 ${settings.cell.w}×${settings.cell.h}`;
   document.getElementById("sheet-page")!.innerHTML =
     layout.pages > 1
       ? `<button type="button" class="btn" id="sheet-prev">上一页</button> ${sheetPage + 1}/${layout.pages} <button type="button" class="btn" id="sheet-next">下一页</button>`
-      : `1/1 · ${layout.columns} 列`;
+      : `1/1 · ${pageLayout.columns} 列 × ${pageLayout.rows} 行`;
   document.getElementById("sheet-prev")?.addEventListener("click", () => {
     sheetPage = Math.max(0, sheetPage - 1);
     void refreshExportPreview();
